@@ -86,22 +86,49 @@ comparison off with `--no-template-history` or
 Quoting is normalised before comparison, so changing `A=x` to `A="x"` is not
 reported. Comment-only edits are not reported either.
 
-### Why real values are never stored
+### Why real values are never read
 
-The obvious extension is to cache the *real* values and alert when one changes.
-This tool deliberately does not, and the reason is the same one that lets it run
-in CI at all:
+The obvious extension is to compare the *real* values and alert when one changes.
+This tool deliberately does not. The reason is not the storage — that part is
+solvable — it is the access.
 
-- Caching real values means storing secrets at rest, which needs encryption and
-  key management — a new attack surface added to a linting tool.
-- It would require the tool to read production configuration. Today it needs no
-  access to any environment, which is what makes it safe to run on every push.
-- Rotating a secret is normal and healthy. Alerting every time one changes trains
-  the team to ignore the channel.
+**Storage is solvable, and masking is the wrong solution for it.** Detecting "did
+this change" needs no value at all, only `HMAC-SHA256(salt, value)`. That is
+strictly safer than showing the first and last three characters, because a mask
+stores part of the actual secret. So if storage were the only problem, hashing
+would settle it.
 
-The template is different: its values are placeholders by definition, and it is
-already committed to the repository. Comparing it needs no cache of its own — git
-is the store.
+**Access is not solvable.** Hashing or masking still requires reading the real
+value first, which means injecting production configuration into the job that
+runs the check. Today this tool needs no access to any environment — that is what
+makes it safe to run on every push, and what a masking feature would quietly give
+up. A CI job holding every secret for every environment is a much bigger problem
+than an undocumented variable.
+
+**And masking leaks more than it appears to.** Structured values give up their
+shape in the first and last few characters:
+
+```
+postgres://admin:S3cr3t@db.internal:5432/app   ->  pos...app   (scheme, database name)
+sk_test_a1b2c3                                 ->  sk_...2c3   (test key, not live)
+DEBUG=true                                     ->  tru...rue   (fully recovered)
+```
+
+Six characters of a twenty-character token is 30% of it, and Discord history is
+retained and usually readable by more people than the secret store is.
+
+**Finally, "changed" is a weak signal.** Rotating a secret is normal and healthy,
+so an alert on every change is noise. It does not distinguish a correct rotation
+from a wrong value.
+
+A more useful direction — comparing a live value against the committed
+*placeholder*, to catch the `.env` that was copied and never filled in — is
+tracked in `TODO.md`. It answers "is this value wrong" rather than "did it
+change", and it runs where the value already legitimately lives.
+
+The template is a different case entirely: its values are placeholders by
+definition, and it is already committed to the repository. Comparing it needs no
+cache and no access — git is the store.
 
 ## Languages scanned
 

@@ -102,6 +102,44 @@ at rest, it would require the tool to read production configuration, and a
 rotated secret is a normal event that would generate noise. The reasoning is in
 the README so it does not get re-litigated.
 
+## Considered: checking real values
+
+Asked directly: if the objection to reading real values is that they are secret,
+why not mask them — show the first and last three characters?
+
+Masking is the wrong tool for the storage half of the problem. Detecting "did
+this change" needs no value at all, only `HMAC-SHA256(salt, value)`, which is
+strictly safer than a mask because a mask stores part of the real secret.
+
+But storage was never the blocker. Reading the value at all is. Hashing or
+masking both require the check to run somewhere that holds production
+configuration, and today the tool needs access to no environment whatsoever. That
+property is worth more than the feature. Masking also leaks the shape of
+structured values (`pos...app` gives up the scheme and database name) and fully
+recovers low-entropy ones (`tru...rue`).
+
+The signal is weak too: a rotated secret is a normal event, so "changed" cannot
+distinguish a correct rotation from a wrong value.
+
+### Better direction, if this is wanted
+
+Check whether a value is *wrong*, not whether it changed, and run it where the
+value already legitimately lives — a developer's machine, or the deploy job:
+
+1. **`env-drift verify`** — compare each live value against the committed
+   placeholder and report the ones still equal to it. Catches the `.env` that was
+   copied from `.env.example` and never filled in, which is a real and frequent
+   bug. No storage, no cache, and no value ever leaves the process — the report
+   contains only variable names. ~1.5 h
+2. **Shape check from the placeholder** — `.env.example` says
+   `REDIS_URL=redis://localhost`, so a live value that does not start with
+   `redis://` or `rediss://` is flagged. Catches a value copied from the wrong
+   environment, which drift detection cannot see. Reports "scheme does not match",
+   never the value. ~2 h
+
+Both would need a hard rule that the Discord reporter is never handed a real
+value, enforced by a test.
+
 ## Open questions
 
 - Should a Spring project compare against `.env.example` at all, or against a
