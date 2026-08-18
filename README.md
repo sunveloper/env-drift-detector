@@ -128,6 +128,51 @@ cp hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
 
+## Where the real values live
+
+**No `.env` file is deployed anywhere.** In CI this tool needs exactly one real
+value — the Discord webhook URL — and it reads it from the environment, which is
+what a CI secret store injects.
+
+| Item | Location | Committed? |
+| --- | --- | --- |
+| `.env.example` | In the repository | Yes — placeholders only |
+| `.env` | Developer machines only | No — listed in `.gitignore` |
+| The real `DISCORD_WEBHOOK_URL` | CI secret store | Not a file at all |
+
+`load_dotenv()` in `cli.py` is a local convenience. When `.env` is absent it
+does nothing and the process environment is used instead, which is exactly the
+CI path — so no workflow step has to create a file.
+
+Why not just write a `.env` during the CI run:
+
+- The content would have to come from somewhere. Committing it puts a
+  credential in git history permanently, and history is hard to purge.
+- GitHub masks secret values in workflow logs automatically. A file that a build
+  step `cat`s is not masked by anything.
+
+### Other CI platforms
+
+The tool only ever reads environment variables, so nothing in the code changes:
+
+| Platform | Where to put the webhook URL |
+| --- | --- |
+| GitHub Actions | Settings → Secrets and variables → Actions |
+| GitLab CI | Settings → CI/CD → Variables, tick **Masked** |
+| Jenkins | Credentials → Secret text, then `withCredentials` |
+| Azure DevOps | Pipeline → Variables, tick **Keep this value secret** |
+
+### Scanning a different repository
+
+The `.env.example` being checked belongs to the repository under scan, not to
+this tool. That file is already committed there as a matter of course, and the
+tool reads it straight from the working tree — there is nothing extra to
+prepare.
+
+That repository's *real* values are never needed either. The comparison is
+between variable **names**, so the tool never reads a value. This is why it can
+run in CI without any access to production secrets.
+
 ## Configuration
 
 Flags win over environment variables, which win over defaults.
