@@ -62,14 +62,53 @@ set, so reporting them would be noise. Run `--all` when you want that answer.
 
 ## Languages scanned
 
-| Language | Detected via | Patterns |
-| --- | --- | --- |
-| Python (`.py`, `.pyi`) | `ast` parse | `os.getenv("X")`, `os.environ["X"]`, `os.environ.get("X")`, `environ.setdefault("X", ...)` |
-| JS / TS (`.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`) | regex | `process.env.X`, `process.env["X"]`, `import.meta.env.X` |
+| Extractor | Files | Detected via | Patterns |
+| --- | --- | --- | --- |
+| `python` | `.py`, `.pyi` | `ast` parse | `os.getenv("X")`, `os.environ["X"]`, `os.environ.get("X")`, `environ.setdefault("X", ...)` |
+| `javascript` | `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` | regex | `process.env.X`, `process.env["X"]`, `import.meta.env.X` |
+| `nest-config` | same as `javascript` | regex | `configService.get('X')`, `get<string>('X')`, `get('X', default)`, `getOrThrow('X')` |
+
+By stack:
+
+| Stack | Covered by |
+| --- | --- |
+| Python | `python` |
+| Node.js, Express | `javascript` |
+| Next.js | `javascript` — pass `--template .env.local` if that is the project's template |
+| NestJS | `javascript` + `nest-config`, both run over the same file |
+| Java / Spring Boot | Not yet — see `TODO.md` |
 
 Python uses a real parser, so a variable name inside a comment or a docstring is
 not a false positive. Computed keys (`os.getenv(prefix + "NAME")`) are skipped —
 their value is not knowable without running the code.
+
+`ConfigService` also serves configuration that has nothing to do with the
+environment, so `nest-config` applies two restrictions. The receiver name must
+contain "config" (`configService`, `config`, `appConfig`) — `userService.get('X')`
+is a data lookup. And the key must be upper snake case, because Nest's namespaced
+keys (`config.get('app.port')`) resolve against a config object rather than the
+environment. `getOrThrow` is always treated as required: it states outright that
+an unset value is fatal.
+
+### Adding a stack
+
+Each extractor is one module under `src/env_drift/extractors/`, exposing a class
+that satisfies the `Extractor` protocol in `extractors/base.py`:
+
+```python
+class Extractor(Protocol):
+    name: str
+    suffixes: frozenset[str]   # claimed file suffixes
+    filenames: frozenset[str]  # claimed exact file names, e.g. application.yml
+
+    def extract(self, source: str, relative_path: str) -> list[Usage]: ...
+```
+
+Register the instance in `extractors/__init__.py` and it is live. The scanner, the
+comparison and the reporters need no changes — they only ever see `list[Usage]`.
+More than one extractor may claim the same file, which is how a Nest `.ts` file
+gets scanned for both `process.env` and `ConfigService` without either extractor
+knowing about the other.
 
 ## Setup
 
@@ -234,7 +273,7 @@ Use the environment variable instead.
 ## How it works
 
 ```
-git diff (changed files) -> scanner (ast / regex) -> compare vs template -> console + Discord
+git diff (changed files) -> registry picks extractors -> compare vs template -> console + Discord
 ```
 
 Each stage is a separate module with no knowledge of the next, which is why the
@@ -243,7 +282,8 @@ scanner can be tested on plain strings and the comparison on plain sets:
 | Module | Responsibility |
 | --- | --- |
 | `git_source.py` | Which files the push touched; commit metadata. |
-| `scanner.py` | Env var reads found in source, with `file:line` and whether the read has a fallback. |
+| `scanner.py` | Which files to open; hands each to the registry. No language knowledge. |
+| `extractors/` | One module per stack. Env var reads with `file:line` and whether the read has a fallback. |
 | `template.py` | Names declared in the env template. |
 | `drift.py` | Classify: missing / undocumented-with-default / unused / ignored. |
 | `models.py` | `Usage` and `DriftReport` — the values passed between stages. |
@@ -268,8 +308,11 @@ drift in files it did not touch, and a multi-commit push with an explicit base.
   rather than guessed.
 - `.env.example` is the source of truth for what a variable is *called*, not for
   what its value should be. Values in it are placeholders.
-- JS/TS detection is regex-based, so `process.env` inside a JS comment counts as
-  a usage. That errs toward over-reporting, which is the safer direction.
+- JS/TS and Nest detection are regex-based, so `process.env` inside a JS comment
+  counts as a usage. That errs toward over-reporting, which is the safer direction.
+- A Nest config key in lower case or with a dot is treated as non-environment and
+  skipped. A project that genuinely reads `config.get('port')` from the
+  environment will not be covered.
 - A fallback is only recognised at the read itself. `value = os.getenv("X") or
   "default"` on the next line, or a default applied inside a config class, still
   reports as required. Again, over-reporting rather than staying silent.

@@ -1,8 +1,7 @@
 # TODO — multi-stack support
 
-Planned work to extend scanning beyond Python and plain JS/TS. Nothing here is
-implemented yet; this file records the design so the next session can pick it up
-without re-deriving it.
+Remaining work to extend scanning beyond Python, JS/TS and NestJS. This file
+records the design so the next session can pick it up without re-deriving it.
 
 ## Current coverage
 
@@ -11,12 +10,39 @@ without re-deriving it.
 | Python | Supported | — |
 | Node.js | Supported | — |
 | Next.js | Supported | Template is usually `.env.local`, so callers must pass `--template .env.local` |
-| NestJS | Partial | `process.env` is caught, but `configService.get('DB_HOST')` — the form Nest projects actually use — is not |
+| NestJS | Supported | — |
 | Java / Spring Boot | Not supported | `.java`, `application.yml` and `application.properties` are never scanned |
 
-The limitation lives in `scan_file` (`src/env_drift/scanner.py`), which
-dispatches on file suffix through a hard-coded branch: Python suffixes go to the
-AST visitor, JS/TS suffixes go to the regex, everything else returns nothing.
+## Done: extractor registry (phase 1)
+
+`scan_file` no longer branches on suffix. `extractors/base.py` defines the
+`Extractor` protocol and a `Registry` that answers "who handles this file?", and
+`scanner.py` holds no language knowledge at all — it decides which files to open
+and hands each to the registry.
+
+```
+src/env_drift/extractors/
+  base.py           Extractor protocol, Registry, NO_FALLBACK
+  python_ast.py     os.getenv / os.environ
+  javascript.py     process.env / import.meta.env, plus shared fallback helpers
+  nest.py           configService.get('X')
+  __init__.py       DEFAULT_EXTRACTORS and default_registry
+```
+
+More than one extractor can claim a file, which is how a Nest `.ts` file is
+scanned for both `process.env` and `ConfigService`. Adding a stack means adding a
+module and appending it to `DEFAULT_EXTRACTORS`.
+
+## Done: NestJS (phase 2)
+
+`nest.py` covers `configService.get('X')`, the TS generic form `get<string>('X')`,
+the second-argument default `get('X', 3000)`, a trailing `??` / `||` fallback, and
+`getOrThrow` as always-required.
+
+Two restrictions keep `ConfigService`'s non-environment uses out of the report:
+the receiver name must contain "config", and the key must be upper snake case
+(Nest's namespaced keys such as `app.port` resolve against a config object, not
+the environment).
 
 ## Why Spring Boot is the hard case
 
@@ -89,20 +115,18 @@ The new extractors inherit this for free: Spring's `${VAR:default}` and Nest's
 `configService.get('X') ?? 'fallback'` map to `optional=True`, with the literal
 captured in `default` when it is readable.
 
-## Ordered plan
+## Remaining plan
 
-1. **Refactor to the registry** — move the two existing extractors behind the
-   `Extractor` protocol, keep all current tests green. ~1.5 h
-2. **NestJS extractor** — `configService.get('X')`, including the generic form
-   `get<string>('X')` and the `??` fallback. ~1 h
-3. **Spring Boot extractors** — `spring_props.py` plus `java.py`, mapping
-   `${VAR:default}` to `optional=True`. ~3 h
-4. **Tests for the three new stacks** — one fixture repo per stack in the
-   integration suite. ~1.5 h
+1. **Spring Boot extractors** — `spring_props.py` for `${VAR}` / `${VAR:default}`
+   in `application.yml` and `application.properties`, plus `java.py` for
+   `System.getenv` and `System.getProperty`. `filenames` on the protocol already
+   exists for the `application.*` case. ~3 h
+2. **Spring integration fixture** — a `src/main/resources/application.yml` plus a
+   `.java` file in the integration suite. ~1 h
+3. **Wrapped reads** — the two-pass analysis described below. ~2 h
 
-Total ~7 h. Steps 1 and 2 alone deliver full Node / Next / Nest coverage in
-~2.5 h; Spring is worth treating as a separate phase because it costs as much as
-everything else combined.
+Roughly 6 h left. Spring is worth treating as its own phase; it costs as much as
+phases 1 and 2 combined did.
 
 ## Known false positive: reads behind a helper
 

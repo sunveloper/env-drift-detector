@@ -144,3 +144,39 @@ def test_variable_without_a_default_still_fails(repo: Path, capsys):
     assert run_cli(repo) == 1
     out = capsys.readouterr().out
     assert "SECRET_KEY" in out and "LOG_LEVEL" in out
+
+
+def test_nestjs_config_service_reads_are_detected(repo: Path, capsys):
+    # A Nest service typically never touches process.env directly.
+    commit_file(repo, ".env.example", "PORT=3000\n", "add template")
+    commit_file(
+        repo,
+        "src/app.service.ts",
+        "@Injectable()\n"
+        "export class AppService {\n"
+        "  constructor(private config: ConfigService) {}\n"
+        "  url = this.config.get<string>('DATABASE_URL');\n"
+        "  port = this.config.get('PORT', 3000);\n"
+        "}\n",
+        "add service",
+    )
+
+    assert run_cli(repo) == 1
+    out = capsys.readouterr().out
+    assert "DATABASE_URL" in out
+    assert "src/app.service.ts:4" in out
+
+
+def test_one_typescript_file_is_scanned_by_both_extractors(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(
+        repo,
+        "src/main.ts",
+        "const mode = process.env.APP_MODE;\n"
+        "const url = configService.get('DATABASE_URL');\n",
+        "mixed access",
+    )
+
+    assert run_cli(repo) == 1
+    out = capsys.readouterr().out
+    assert "APP_MODE" in out and "DATABASE_URL" in out
