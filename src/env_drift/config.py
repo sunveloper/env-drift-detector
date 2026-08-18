@@ -38,6 +38,7 @@ class Config:
     head_ref: str
     dry_run: bool
     notify_on_success: bool
+    check_template_history: bool
 
     @classmethod
     def resolve(
@@ -53,6 +54,7 @@ class Config:
         dry_run: bool,
         notify_on_success: bool,
         fail_on_missing: bool | None,
+        check_template_history: bool | None = None,
     ) -> Config:
         repo_path = Path(repo or ".").resolve()
         template_name = template or os.getenv("ENV_EXAMPLE_PATH") or ".env.example"
@@ -79,4 +81,9 @@ class Config:
             head_ref=head,
             dry_run=dry_run,
             notify_on_success=notify_on_success,
+            check_template_history=(
+                check_template_history
+                if check_template_history is not None
+                else _env_flag("ENV_DRIFT_TEMPLATE_HISTORY", True)
+            ),
         )

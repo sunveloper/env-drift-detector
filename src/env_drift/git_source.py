@@ -87,3 +87,23 @@ def _has_parent(root: Path, ref: str) -> bool:
 
 def _to_paths(root: Path, output: str) -> list[Path]:
     return [root / name for name in output.splitlines() if name.strip()]
+
+
+def file_at_ref(root: Path, ref: str, relative_path: str) -> str | None:
+    """The contents of a tracked file as of ``ref``, or None if it did not exist.
+
+    Used to fetch the previous revision of the env template. Git already stores
+    that history, which is why comparing template revisions needs no cache of
+    its own.
+    """
+    try:
+        return _run(["show", f"{ref}:{relative_path}"], root)
+    except GitError:
+        # The file was added in this range, or the ref does not exist. Either way
+        # there is no previous revision to compare against.
+        return None
+
+
+def parent_ref(root: Path, ref: str = "HEAD") -> str | None:
+    """``<ref>^`` if it exists, else None (the repository's first commit)."""
+    return f"{ref}^" if _has_parent(root, ref) else None

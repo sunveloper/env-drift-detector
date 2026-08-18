@@ -60,6 +60,49 @@ omitting the argument, so it is treated as required too.
 changed files means most template entries are legitimately absent from the scan
 set, so reporting them would be noise. Run `--all` when you want that answer.
 
+## Template changes
+
+Drift detection answers "is the template complete?". A second question matters
+just as much: "the template changed — what do I have to do about it?" Git already
+stores the previous revision of `.env.example`, so the tool reads it with
+`git show <base>:.env.example` and reports the difference:
+
+| Change | Reported as | Asks for local action? |
+| --- | --- | --- |
+| Variable added | `+ NAME (add it to your .env)` | Yes |
+| Placeholder value changed | `~ NAME  "redis://…" -> "rediss://…"` | Yes — the format changed |
+| Variable removed | `- NAME (safe to drop from your .env)` | No |
+
+A placeholder change is the useful one in practice. When `REDIS_URL` goes from
+`redis://` to `rediss://`, nothing is missing and no test fails — but every
+developer's local value is now wrong, and they find out one at a time. This turns
+that into one Discord message.
+
+Only added variables and changed placeholders colour the Discord embed yellow; a
+removal is tidy-up, not a task. None of them affect the exit code. Turn the whole
+comparison off with `--no-template-history` or
+`ENV_DRIFT_TEMPLATE_HISTORY=false`.
+
+Quoting is normalised before comparison, so changing `A=x` to `A="x"` is not
+reported. Comment-only edits are not reported either.
+
+### Why real values are never stored
+
+The obvious extension is to cache the *real* values and alert when one changes.
+This tool deliberately does not, and the reason is the same one that lets it run
+in CI at all:
+
+- Caching real values means storing secrets at rest, which needs encryption and
+  key management — a new attack surface added to a linting tool.
+- It would require the tool to read production configuration. Today it needs no
+  access to any environment, which is what makes it safe to run on every push.
+- Rotating a secret is normal and healthy. Alerting every time one changes trains
+  the team to ignore the channel.
+
+The template is different: its values are placeholders by definition, and it is
+already committed to the repository. Comparing it needs no cache of its own — git
+is the store.
+
 ## Languages scanned
 
 | Extractor | Files | Detected via | Patterns |
@@ -159,6 +202,10 @@ env-drift: scanned 3 file(s) against .env.example
 
   UNDOCUMENTED but has a default (1) - does not fail the build:
     - BILLING_TIMEOUT_SECONDS (default: "30")  read at src/billing/client.py:19
+
+  TEMPLATE CHANGED since HEAD^:
+    ~ REDIS_URL  placeholder changed: "redis://localhost" -> "rediss://localhost"
+    Everyone should refresh their local .env.
 ```
 
 Exit code is `1` because of the two missing entries, so CI stops there. Had
@@ -175,6 +222,7 @@ env-drift --repo ../other-service          # a different repository
 env-drift --ignore SENTRY_DSN,DEBUG_PORT   # skip specific names
 env-drift --no-fail                        # report but always exit 0
 env-drift --notify-on-success              # also post the green "all clear"
+env-drift --no-template-history            # skip the template-revision comparison
 ```
 
 ### Exit codes
@@ -257,6 +305,7 @@ Flags win over environment variables, which win over defaults.
 | `ENV_DRIFT_IGNORE` | `--ignore` | see table above | Comma-separated names to skip. Replaces the default list rather than extending it. |
 | `ENV_DRIFT_FAIL_ON_MISSING` | `--no-fail` | `true` | Whether missing variables fail the run. |
 | `ENV_DRIFT_BASE_REF` | `--base` | `HEAD^` | Start of the range to diff. |
+| `ENV_DRIFT_TEMPLATE_HISTORY` | `--no-template-history` | `true` | Whether to compare the template against its previous revision. |
 
 Passing `--webhook` on the command line puts a credential in your shell history.
 Use the environment variable instead.
@@ -284,7 +333,8 @@ scanner can be tested on plain strings and the comparison on plain sets:
 | `git_source.py` | Which files the push touched; commit metadata. |
 | `scanner.py` | Which files to open; hands each to the registry. No language knowledge. |
 | `extractors/` | One module per stack. Env var reads with `file:line` and whether the read has a fallback. |
-| `template.py` | Names declared in the env template. |
+| `template.py` | Names and placeholder values declared in the env template. |
+| `history.py` | How the template changed since the base revision. |
 | `drift.py` | Classify: missing / undocumented-with-default / unused / ignored. |
 | `models.py` | `Usage` and `DriftReport` — the values passed between stages. |
 | `reporters/` | Render to terminal or Discord. |

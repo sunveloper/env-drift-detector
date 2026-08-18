@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from .history import TemplateHistory
 from .models import DriftReport, Usage
 
 DEFAULT_IGNORED = frozenset(
@@ -37,6 +38,7 @@ def compare(
     commit: str = "",
     commit_subject: str = "",
     repo: str = "",
+    history: TemplateHistory | None = None,
 ) -> DriftReport:
     """Classify each variable as documented, missing, optional-undocumented or unused.
 
@@ -92,4 +94,5 @@ def compare(
         commit=commit,
         commit_subject=commit_subject,
         repo=repo,
+        history=history,
     )

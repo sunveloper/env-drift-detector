@@ -17,6 +17,7 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
 
     if not report.has_drift:
         lines.append("  OK - no drift found.")
+        lines.extend(_history_lines(report))
         return "\n".join(lines)
 
     if report.missing:
@@ -42,7 +43,29 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
         for name in report.unused:
             lines.append(f"    - {name}")
 
+    lines.extend(_history_lines(report))
     return "\n".join(lines)
+
+
+def _history_lines(report: DriftReport) -> list[str]:
+    """What changed in the template itself, and what that asks of the team."""
+    history = report.history
+    if history is None or not history.has_changes:
+        return []
+
+    lines = ["", f"  TEMPLATE CHANGED since {history.compared_against}:"]
+    for name in history.added:
+        lines.append(f"    + {name}  (add it to your .env)")
+    for name in history.removed:
+        lines.append(f"    - {name}  (no longer used, safe to drop from your .env)")
+    for change in history.placeholder_changed:
+        lines.append(
+            f"    ~ {change.name}  placeholder changed: "
+            f'"{change.before}" -> "{change.after}"'
+        )
+    if history.needs_local_action:
+        lines.append("    Everyone should refresh their local .env.")
+    return lines
 
 
 def _locations(report: DriftReport, name: str) -> str:

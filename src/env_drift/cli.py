@@ -17,7 +17,8 @@ from dotenv import load_dotenv
 from . import __version__
 from .config import Config
 from .drift import compare
-from .git_source import GitError, changed_files, commit_info, repo_root
+from .git_source import GitError, changed_files, commit_info, parent_ref, repo_root
+from .history import template_history
 from .reporters import DiscordError, render_console, send_to_discord
 from .scanner import iter_source_files, scan_paths
 
@@ -57,6 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the report without sending anything to Discord",
     )
     parser.add_argument(
+        "--no-template-history",
+        dest="check_template_history",
+        action="store_const",
+        const=False,
+        default=None,
+        help="Skip comparing the env template against its previous revision",
+    )
+    parser.add_argument(
         "--notify-on-success",
         action="store_true",
         help="Also send a Discord message when no drift is found",
@@ -88,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         notify_on_success=args.notify_on_success,
         fail_on_missing=args.fail_on_missing,
+        check_template_history=args.check_template_history,
     )
 
     try:
@@ -105,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.flush()
 
     should_notify = config.webhook_url and not config.dry_run and (
-        report.has_drift or config.notify_on_success
+        report.is_noteworthy or config.notify_on_success
     )
     if should_notify:
         try:
@@ -114,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"env-drift: could not notify Discord: {exc}", file=sys.stderr)
             return EXIT_ERROR
         print("env-drift: report sent to Discord.")
-    elif report.has_drift and not config.webhook_url:
+    elif report.is_noteworthy and not config.webhook_url:
         print("env-drift: DISCORD_WEBHOOK_URL not set - report not sent.", file=sys.stderr)
 
     # Only a required variable absent from the template breaks a deployment, so
@@ -152,6 +162,12 @@ def run(config: Config):
         if path.is_file() and _is_within(path, root)
     )
 
+    history = None
+    if config.check_template_history:
+        base = config.base_ref or parent_ref(root, config.head_ref)
+        if base:
+            history = template_history(root, config.template_path, base)
+
     return compare(
         usages,
         template_names,
@@ -162,6 +178,7 @@ def run(config: Config):
         commit=commit.sha,
         commit_subject=commit.subject,
         repo=root.name,
+        history=history,
     )
 
 

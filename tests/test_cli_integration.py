@@ -180,3 +180,45 @@ def test_one_typescript_file_is_scanned_by_both_extractors(repo: Path, capsys):
     assert run_cli(repo) == 1
     out = capsys.readouterr().out
     assert "APP_MODE" in out and "DATABASE_URL" in out
+
+
+def test_template_addition_is_reported_from_git_history(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(repo, ".env.example", "KNOWN=x\nNEW_FLAG=off\n", "document new flag")
+
+    assert run_cli(repo) == 0
+    out = capsys.readouterr().out
+    assert "TEMPLATE CHANGED" in out
+    assert "+ NEW_FLAG" in out
+    assert "refresh their local .env" in out
+
+
+def test_changed_placeholder_is_reported_from_git_history(repo: Path, capsys):
+    commit_file(repo, ".env.example", "REDIS_URL=redis://localhost\n", "add template")
+    commit_file(repo, ".env.example", "REDIS_URL=rediss://localhost\n", "require TLS")
+
+    assert run_cli(repo) == 0
+    assert '"redis://localhost" -> "rediss://localhost"' in capsys.readouterr().out
+
+
+def test_the_commit_that_introduces_the_template_has_nothing_to_compare(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+
+    assert run_cli(repo) == 0
+    assert "TEMPLATE CHANGED" not in capsys.readouterr().out
+
+
+def test_template_history_can_be_switched_off(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(repo, ".env.example", "KNOWN=x\nNEW_FLAG=off\n", "document new flag")
+
+    assert run_cli(repo, "--no-template-history") == 0
+    assert "TEMPLATE CHANGED" not in capsys.readouterr().out
+
+
+def test_untouched_template_reports_no_history(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(repo, "app.py", "import os\nos.getenv('KNOWN')\n", "use it")
+
+    assert run_cli(repo) == 0
+    assert "TEMPLATE CHANGED" not in capsys.readouterr().out

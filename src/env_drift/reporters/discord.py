@@ -78,6 +78,26 @@ def _usage_field(report: DriftReport, names: tuple[str, ...], *, show_default: b
     return _truncate("\n".join(lines), _MAX_FIELD_VALUE)
 
 
+def _history_field(report: DriftReport) -> str:
+    """Template changes, phrased as what each developer has to do about them."""
+    history = report.history
+    if history is None or not history.has_changes:
+        return ""
+
+    lines: list[str] = []
+    for name in history.added:
+        lines.append(f"➕ **{name}** — add it to your `.env`")
+    for name in history.removed:
+        lines.append(f"➖ **{name}** — no longer used, safe to drop")
+    for change in history.placeholder_changed:
+        lines.append(
+            f"✏️ **{change.name}** — placeholder `{change.before}` → `{change.after}`"
+        )
+    if history.needs_local_action:
+        lines.append("_Everyone should refresh their local `.env`._")
+    return _truncate("\n".join(lines), _MAX_FIELD_VALUE)
+
+
 def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
     """Render the report as a Discord webhook JSON body.
 
@@ -91,6 +111,9 @@ def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
         color, title = COLOR_WARN, "Env drift: undocumented variables with defaults"
     elif report.unused and detect_unused:
         color, title = COLOR_WARN, "Env drift: template has stale variables"
+    elif report.history is not None and report.history.needs_local_action:
+        # No drift, but everyone has to touch their own .env - not a silent pass.
+        color, title = COLOR_WARN, "Env template changed — update your .env"
     else:
         color, title = COLOR_OK, "Env check passed"
 
@@ -130,6 +153,16 @@ def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
                 "value": _usage_field(
                     report, report.optional_undocumented, show_default=True
                 ),
+                "inline": False,
+            }
+        )
+    history_value = _history_field(report)
+    if history_value:
+        assert report.history is not None  # guaranteed by _history_field
+        fields.append(
+            {
+                "name": f"Template changed since {report.history.compared_against}",
+                "value": history_value,
                 "inline": False,
             }
         )

@@ -8,6 +8,10 @@ stages independently testable and free of any I/O knowledge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - import only needed for the annotation
+    from .history import TemplateHistory
 
 
 @dataclass(frozen=True)
@@ -63,9 +67,21 @@ class DriftReport:
     commit_subject: str = ""
     repo: str = ""
 
+    history: TemplateHistory | None = None
+    """How the template itself changed in this push, when a base revision existed.
+
+    Informational: it tells the team what to update in their own `.env`, and never
+    affects the exit code.
+    """
+
     @property
     def has_drift(self) -> bool:
         return bool(self.missing or self.unused or self.optional_undocumented)
+
+    @property
+    def is_noteworthy(self) -> bool:
+        """Whether there is anything at all worth sending to Discord."""
+        return self.has_drift or bool(self.history and self.history.has_changes)
 
     @property
     def fails_build(self) -> bool:
