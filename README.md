@@ -437,9 +437,89 @@ env-drift --no-template-history            # skip the template-revision comparis
 
 Both commands use the same codes.
 
+## Using it on your own project
+
+This repository is the tool. Your service does not vendor it — it installs it in
+CI and runs it against its own working tree. Nothing is added to your service's
+dependencies.
+
+### 1. Add one workflow to your service (5 minutes)
+
+Create `.github/workflows/env-drift.yml` in the repository you want checked:
+
+```yaml
+name: env-drift
+
+on: push
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the diff needs the pre-push commit to exist locally
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install env-drift
+        run: pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+
+      - name: Check for env drift
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: env-drift --base "${{ github.event.before }}"
+```
+
+Python in the runner is only how the tool executes. A Spring Boot or NestJS
+service needs no Python of its own — `setup-python` provisions it inside the job
+and it disappears with the runner.
+
+### 2. Add the secret (1 minute)
+
+**Settings → Secrets and variables → Actions → New repository secret**, named
+`DISCORD_WEBHOOK_URL`. Without it the tool still runs and still fails the build;
+it just prints to the job log instead of posting.
+
+### 3. Tell the team about `verify` (1 minute)
+
+Add two lines to your service's own README:
+
+```bash
+pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+env-drift verify --env-file .env    # after copying .env.example to .env
+```
+
+That is what a new joiner or a tester runs instead of discovering a missing value
+by watching the service fail to boot.
+
+Optionally install the pre-push hook so drift is caught before it leaves the
+machine — see [below](#run-it-on-every-push).
+
+### Pinning
+
+`@main` tracks this repository. For a service where a surprise change to the
+checker is unwelcome, pin a tag instead:
+
+```yaml
+run: pip install "git+https://github.com/<your-org>/env-drift-detector@v1.0.0"
+```
+
+### One tool, many repositories
+
+The same install line works for every service. Nothing here is specific to one
+stack: the extractor registry picks the right reader per file, so a Python
+service, a NestJS API and a Spring Boot service all get the same workflow with
+the same two steps. Adding it to a fourth repository is a copy-paste plus one
+secret.
+
 ## Run it on every push
 
-`.github/workflows/env-drift.yml` is included and ready. Two steps to enable it:
+`.github/workflows/env-drift.yml` in *this* repository checks this repository —
+it is the dogfooding setup, and a working example to copy. Two steps to enable it
+here:
 
 1. Add a repository secret named `DISCORD_WEBHOOK_URL`
    (**Settings → Secrets and variables → Actions → New repository secret**).

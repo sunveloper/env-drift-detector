@@ -426,9 +426,87 @@ env-drift --no-template-history            # ข้ามการเทีย�
 
 ทั้งสองคำสั่งใช้ code ชุดเดียวกัน
 
+## เอาไปใช้กับโปรเจ็กต์ของคุณ
+
+repository นี้คือตัวเครื่องมือ service ของคุณไม่ต้องเอาโค้ดนี้ไปแปะไว้ —
+มันติดตั้งเครื่องมือใน CI แล้วรันกับ working tree ของตัวเอง ไม่มีอะไรเพิ่มเข้า
+dependency ของ service คุณ
+
+### 1. เพิ่ม workflow หนึ่งไฟล์ใน service ของคุณ (5 นาที)
+
+สร้าง `.github/workflows/env-drift.yml` ใน repository ที่ต้องการให้ตรวจ:
+
+```yaml
+name: env-drift
+
+on: push
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # การ diff ต้องมี commit ก่อน push อยู่ในเครื่อง
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install env-drift
+        run: pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+
+      - name: Check for env drift
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: env-drift --base "${{ github.event.before }}"
+```
+
+Python ใน runner เป็นเพียงวิธีที่เครื่องมือทำงาน service ที่เป็น Spring Boot
+หรือ NestJS ไม่ต้องมี Python ของตัวเองเลย — `setup-python` เตรียมให้ใน job
+และมันหายไปพร้อม runner
+
+### 2. เพิ่ม secret (1 นาที)
+
+**Settings → Secrets and variables → Actions → New repository secret** ชื่อ
+`DISCORD_WEBHOOK_URL` ถ้าไม่มี เครื่องมือยังรันและยังทำให้ build fail เหมือนเดิม
+เพียงแต่พิมพ์ลง job log แทนการโพสต์
+
+### 3. บอกทีมเรื่อง `verify` (1 นาที)
+
+เพิ่มสองบรรทัดใน README ของ service คุณเอง:
+
+```bash
+pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+env-drift verify --env-file .env    # หลัง copy .env.example เป็น .env
+```
+
+นี่คือสิ่งที่คนใหม่หรือ tester รัน แทนที่จะไปค้นพบว่าค่าหายไปจากการนั่งดู service
+boot ไม่ขึ้น
+
+ถ้าต้องการ ติดตั้ง pre-push hook เพื่อจับ drift ก่อนออกจากเครื่อง —
+ดู[ด้านล่าง](#รันทุกครั้งที่-push)
+
+### การ pin เวอร์ชัน
+
+`@main` ตามตัว repository นี้ไปเรื่อยๆ สำหรับ service ที่ไม่ต้องการให้ตัวตรวจ
+เปลี่ยนแบบไม่ทันตั้งตัว ให้ pin ที่ tag แทน:
+
+```yaml
+run: pip install "git+https://github.com/<your-org>/env-drift-detector@v1.0.0"
+```
+
+### เครื่องมือเดียว ใช้ได้หลาย repository
+
+บรรทัด install เดียวกันใช้ได้กับทุก service ไม่มีอะไรในนี้ผูกกับ stack ใด
+stack หนึ่ง: extractor registry เลือกตัวอ่านที่ถูกต้องตามไฟล์ ดังนั้น service
+ที่เป็น Python, NestJS API และ Spring Boot ได้ workflow เดียวกันด้วยสองขั้น
+เดียวกัน การเพิ่มเข้า repository ที่สี่คือการ copy-paste บวก secret หนึ่งตัว
+
 ## รันทุกครั้งที่ push
 
-`.github/workflows/env-drift.yml` มาพร้อมและใช้ได้เลย เปิดใช้สองขั้น:
+`.github/workflows/env-drift.yml` ใน repository *นี้* ตรวจ repository นี้เอง —
+มันเป็นการ dogfood และเป็นตัวอย่างที่ใช้งานได้จริงให้ copy ไป เปิดใช้ที่นี่สองขั้น:
 
 1. เพิ่ม repository secret ชื่อ `DISCORD_WEBHOOK_URL`
    (**Settings → Secrets and variables → Actions → New repository secret**)
