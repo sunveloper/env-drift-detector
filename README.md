@@ -1,5 +1,7 @@
 # env-drift-detector
 
+> Read in another language: [ไทย](README.th-TH.md)
+
 Catches the deploy that would have failed because `.env.example` was never updated.
 
 When a push adds `os.getenv("STRIPE_WEBHOOK_SECRET")` but nobody adds
