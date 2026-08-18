@@ -357,7 +357,7 @@ knowing about the other.
 Prerequisites: Python 3.10 or newer, and `git` on `PATH`.
 
 ```bash
-git clone <your-fork-url> env-drift-detector
+git clone https://github.com/sunveloper/env-drift-detector.git
 cd env-drift-detector
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -465,7 +465,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install env-drift
-        run: pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+        run: pip install "git+https://github.com/sunveloper/env-drift-detector@main"
 
       - name: Check for env drift
         env:
@@ -488,7 +488,7 @@ it just prints to the job log instead of posting.
 Add two lines to your service's own README:
 
 ```bash
-pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+pip install "git+https://github.com/sunveloper/env-drift-detector@main"
 env-drift verify --env-file .env    # after copying .env.example to .env
 ```
 
@@ -504,7 +504,7 @@ machine — see [below](#run-it-on-every-push).
 checker is unwelcome, pin a tag instead:
 
 ```yaml
-run: pip install "git+https://github.com/<your-org>/env-drift-detector@v1.0.0"
+run: pip install "git+https://github.com/sunveloper/env-drift-detector@v1.0.0"
 ```
 
 ### One tool, many repositories

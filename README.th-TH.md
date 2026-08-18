@@ -347,7 +347,7 @@ Nest ถูกสแกนทั้ง `process.env` และ `ConfigService` �
 ต้องมีก่อน: Python 3.10 หรือใหม่กว่า และ `git` อยู่ใน `PATH`
 
 ```bash
-git clone <your-fork-url> env-drift-detector
+git clone https://github.com/sunveloper/env-drift-detector.git
 cd env-drift-detector
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -454,7 +454,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install env-drift
-        run: pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+        run: pip install "git+https://github.com/sunveloper/env-drift-detector@main"
 
       - name: Check for env drift
         env:
@@ -477,7 +477,7 @@ Python ใน runner เป็นเพียงวิธีที่เคร�
 เพิ่มสองบรรทัดใน README ของ service คุณเอง:
 
 ```bash
-pip install "git+https://github.com/<your-org>/env-drift-detector@main"
+pip install "git+https://github.com/sunveloper/env-drift-detector@main"
 env-drift verify --env-file .env    # หลัง copy .env.example เป็น .env
 ```
 
@@ -493,7 +493,7 @@ boot ไม่ขึ้น
 เปลี่ยนแบบไม่ทันตั้งตัว ให้ pin ที่ tag แทน:
 
 ```yaml
-run: pip install "git+https://github.com/<your-org>/env-drift-detector@v1.0.0"
+run: pip install "git+https://github.com/sunveloper/env-drift-detector@v1.0.0"
 ```
 
 ### เครื่องมือเดียว ใช้ได้หลาย repository
