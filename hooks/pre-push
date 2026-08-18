@@ -1,0 +1,15 @@
+#!/bin/sh
+# Local guard: check for env drift before the push leaves your machine.
+# Install with:  cp hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+# Reads DISCORD_WEBHOOK_URL from .env if present. Add --dry-run below if you
+# want the local check to stay off Discord.
+
+set -e
+
+if ! command -v env-drift >/dev/null 2>&1; then
+  echo "pre-push: env-drift not installed, skipping check" >&2
+  exit 0
+fi
+
+env-drift --dry-run

@@ -1,0 +1,118 @@
+# TODO — multi-stack support
+
+Planned work to extend scanning beyond Python and plain JS/TS. Nothing here is
+implemented yet; this file records the design so the next session can pick it up
+without re-deriving it.
+
+## Current coverage
+
+| Stack | Status | Gap |
+| --- | --- | --- |
+| Python | Supported | — |
+| Node.js | Supported | — |
+| Next.js | Supported | Template is usually `.env.local`, so callers must pass `--template .env.local` |
+| NestJS | Partial | `process.env` is caught, but `configService.get('DB_HOST')` — the form Nest projects actually use — is not |
+| Java / Spring Boot | Not supported | `.java`, `application.yml` and `application.properties` are never scanned |
+
+The limitation lives in `scan_file` (`src/env_drift/scanner.py`), which
+dispatches on file suffix through a hard-coded branch: Python suffixes go to the
+AST visitor, JS/TS suffixes go to the regex, everything else returns nothing.
+
+## Why Spring Boot is the hard case
+
+Java code rarely reads an environment variable directly. It reads a Spring
+property, and the property file is what resolves to an environment variable:
+
+```yaml
+# application.yml
+spring:
+  datasource:
+    url: ${DB_URL}            # the environment variable is here
+```
+
+```java
+@Value("${spring.datasource.url}")   // the Java code only sees a property key
+private String url;
+```
+
+So the real environment variable names live in `application.yml` /
+`application.properties`, not in the Java source. Scanning `.java` alone would
+find almost nothing. Three forms need covering:
+
+- `${VAR}` in a property file — required.
+- `${VAR:default}` in a property file — optional, has a fallback.
+- `System.getenv("VAR")` and `System.getProperty("VAR")` in Java source — direct
+  reads that bypass the property layer.
+
+## Design: extractor registry
+
+Replace the suffix branch in `scan_file` with a registry of per-language
+extractors, so adding a stack means adding a file rather than editing the
+dispatcher (Open/Closed principle).
+
+```python
+# src/env_drift/extractors/base.py
+from typing import Protocol
+
+class Extractor(Protocol):
+    name: str
+    suffixes: frozenset[str]
+    filenames: frozenset[str]   # for application.yml, matched by name not suffix
+
+    def extract(self, source: str, relative_path: str) -> list[Usage]: ...
+```
+
+Target layout:
+
+```
+src/env_drift/extractors/
+  base.py           Protocol, registry, and file -> extractor lookup
+  python_ast.py     os.getenv / os.environ            (move existing code here)
+  javascript.py     process.env / import.meta.env     (move existing code here)
+  nest.py           configService.get('X')
+  java.py           System.getenv / System.getProperty
+  spring_props.py   ${VAR} and ${VAR:default} in yml / properties
+```
+
+After the refactor `scan_file` shrinks to: find the extractor that claims this
+file, call `extract`, return the usages. `drift.py` and `reporters/` need no
+changes at all — they only ever see `list[Usage]`.
+
+## Required model change: optional usages
+
+Spring's `${VAR:default}` and Nest's `configService.get('X') ?? 'fallback'` are
+reads with a built-in fallback. Reporting them as missing would be a false
+positive, so `Usage` needs an `optional: bool` field, and `drift.compare` needs
+to treat a variable as missing only when at least one non-optional read exists.
+
+This is the one change that touches existing code beyond the move, so it should
+land in the same commit as the registry refactor to keep the tests coherent.
+
+## Ordered plan
+
+1. **Refactor to the registry** — move the two existing extractors, add
+   `optional` to `Usage`, keep all current tests green. ~1.5 h
+2. **NestJS extractor** — `configService.get('X')`, including the generic form
+   `get<string>('X')` and the `??` fallback. ~1 h
+3. **Spring Boot extractors** — `spring_props.py` plus `java.py`, with
+   `${VAR:default}` mapped to `optional=True`. ~3 h
+4. **Tests for the three new stacks** — one fixture repo per stack in the
+   integration suite. ~1.5 h
+
+Total ~7 h. Steps 1 and 2 alone deliver full Node / Next / Nest coverage in
+~2.5 h; Spring is worth treating as a separate phase because it costs as much as
+everything else combined.
+
+## Open questions
+
+- Should a Spring project compare against `.env.example` at all, or against a
+  checked-in `application-example.yml`? Deployments usually inject the values as
+  real environment variables, which argues for `.env.example` staying the
+  template.
+- Next.js splits `.env.local`, `.env.development` and `.env.production`. Worth
+  auto-detecting the template per stack instead of requiring `--template`.
+
+## Not yet verified
+
+`pytest` has not been run against the current code. Do that before starting the
+refactor, so a failure afterwards is unambiguously caused by the refactor.

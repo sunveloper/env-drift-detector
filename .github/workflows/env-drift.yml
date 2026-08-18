@@ -1,0 +1,52 @@
+name: env-drift
+
+# Runs on every push. The tool compares the environment variables read by the
+# pushed commits against .env.example and posts the result to Discord.
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      scan_all:
+        description: "Scan the whole tree instead of only the pushed commits"
+        type: boolean
+        default: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the diff needs the commit before the push to exist locally.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install .
+
+      - name: Resolve the pushed range
+        id: range
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # github.event.before is all-zeros for a brand-new branch, and can point
+          # at a commit that no longer exists after a force-push. Fall back to the
+          # single-commit default (HEAD^) when it is not usable.
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "base=$BEFORE" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for env drift
+        env:
+          # Add this under Settings > Secrets and variables > Actions.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          env-drift \
+            ${{ steps.range.outputs.base && format('--base {0}', steps.range.outputs.base) || '' }} \
+            ${{ inputs.scan_all && '--all' || '' }}
