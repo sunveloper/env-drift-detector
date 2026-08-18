@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..models import DriftReport
+from ..secrets import safe
 
 ALLOWED_HOSTS = frozenset({"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"})
 
@@ -71,7 +72,7 @@ def _usage_field(report: DriftReport, names: tuple[str, ...], *, show_default: b
 
         label = f"**{name}**"
         if show_default:
-            default = report.default_for(name)
+            default = safe(report.default_for(name))
             if default is not None:
                 label += f" (default `{default}`)"
         lines.append(f"• {label} — {shown}" if shown else f"• {label}")
@@ -91,7 +92,8 @@ def _history_field(report: DriftReport) -> str:
         lines.append(f"➖ **{name}** — no longer used, safe to drop")
     for change in history.placeholder_changed:
         lines.append(
-            f"✏️ **{change.name}** — placeholder `{change.before}` → `{change.after}`"
+            f"✏️ **{change.name}** — placeholder "
+            f"`{safe(change.before)}` → `{safe(change.after)}`"
         )
     if history.needs_local_action:
         lines.append("_Everyone should refresh their local `.env`._")
@@ -105,7 +107,9 @@ def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
     but has a default, or a stale template entry, is yellow: worth fixing, not
     worth blocking a merge.
     """
-    if report.missing:
+    if report.committed_secrets:
+        color, title = COLOR_FAIL, "Committed credential found in the repository"
+    elif report.missing:
         color, title = COLOR_FAIL, "Env drift: variables missing from template"
     elif report.optional_undocumented:
         color, title = COLOR_WARN, "Env drift: undocumented variables with defaults"
@@ -135,6 +139,23 @@ def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
     }
 
     fields: list[dict] = []
+    if report.committed_secrets:
+        fields.append(
+            {
+                "name": (
+                    f"Committed credential ({len(report.committed_secrets)}) "
+                    "— rotate it, then remove it from the repository"
+                ),
+                "value": _truncate(
+                    "\n".join(
+                        f"⚠️ **{s.name}** — {s.kind} at `{s.where}`"
+                        for s in report.committed_secrets
+                    ),
+                    _MAX_FIELD_VALUE,
+                ),
+                "inline": False,
+            }
+        )
     if report.missing:
         fields.append(
             {

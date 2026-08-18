@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def run(config: Config):
     """Do the work and return a DriftReport. Raises GitError / FileNotFoundError."""
-    from .template import parse_template
+    from .template import parse_template_entries
 
     root = repo_root(config.repo_path)
 
@@ -229,7 +229,11 @@ def run(config: Config):
             f"env template not found: {config.template_path}. "
             "Create it, or point at another file with --template."
         )
-    template_names = parse_template(config.template_path)
+    # Entries, not just names: the placeholder values are needed to spot a real
+    # credential that was pasted into the template.
+    template_entries = parse_template_entries(
+        config.template_path.read_text(encoding="utf-8", errors="replace")
+    )
 
     if config.scan_all:
         files: list[Path] = iter_source_files(root)
@@ -253,7 +257,7 @@ def run(config: Config):
 
     return compare(
         usages,
-        template_names,
+        template_entries,
         ignored=config.ignored,
         detect_unused=config.scan_all,
         scanned_files=scanned,
@@ -262,6 +266,7 @@ def run(config: Config):
         commit_subject=commit.subject,
         repo=root.name,
         history=history,
+        template_entries=template_entries,
     )
 
 

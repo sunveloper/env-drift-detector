@@ -137,6 +137,24 @@ A template value that is a genuine default (`PORT=3000`,
 `ENV_EXAMPLE_PATH=.env.example`) is not flagged; `--strict-placeholder` opts into
 flagging any unchanged value.
 
+### Done: credential-shaped values are redacted
+
+Reviewing the above surfaced a hole in the reporters. Two values in a report come
+from the repository - a code fallback literal and a template placeholder - and
+both were printed in full. Normally that is fine, but a real key hardcoded as a
+default, or pasted into `.env.example`, would have been forwarded straight into
+Discord, widening its exposure from "in the repo" to "in a chat channel with
+retained history".
+
+`secrets.py` recognises credential shapes (known issuer prefixes, URLs with an
+embedded password, opaque high-entropy blobs) and the reporters redact them. The
+value is also reported as a `CommittedSecret` finding rather than silently
+dropped - the tool is looking straight at a leaked key, so saying so is more use
+than staying quiet - and it fails the build.
+
+Self-declared stand-ins stay visible, including AWS's documentation key
+`AKIAIOSFODNN7EXAMPLE`, because seeing the placeholder is the point of the report.
+
 ### Still open: shape check from the placeholder
 
 `.env.example` says `REDIS_URL=redis://localhost`, so a live value that does not

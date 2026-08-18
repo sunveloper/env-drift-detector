@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..models import DriftReport
+from ..secrets import safe
 
 _MAX_LOCATIONS = 3
 
@@ -15,10 +16,19 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
         subject = report.commit_subject or "(no subject)"
         lines.append(f"  commit {report.commit[:8]}  {subject}")
 
-    if not report.has_drift:
+    if not report.has_drift and not report.committed_secrets:
         lines.append("  OK - no drift found.")
         lines.extend(_history_lines(report))
         return "\n".join(lines)
+
+    if report.committed_secrets:
+        lines.append("")
+        lines.append(
+            f"  COMMITTED CREDENTIAL ({len(report.committed_secrets)}) "
+            "- rotate the value, then remove it from the repository:"
+        )
+        for secret in report.committed_secrets:
+            lines.append(f"    ! {secret.name}  {secret.kind} at {secret.where}")
 
     if report.missing:
         lines.append("")
@@ -33,7 +43,7 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
             "- does not fail the build:"
         )
         for name in report.optional_undocumented:
-            default = report.default_for(name)
+            default = safe(report.default_for(name))
             shown = f' (default: "{default}")' if default is not None else ""
             lines.append(f"    - {name}{shown}  read at {_locations(report, name)}")
 
@@ -61,7 +71,7 @@ def _history_lines(report: DriftReport) -> list[str]:
     for change in history.placeholder_changed:
         lines.append(
             f"    ~ {change.name}  placeholder changed: "
-            f'"{change.before}" -> "{change.after}"'
+            f'"{safe(change.before)}" -> "{safe(change.after)}"'
         )
     if history.needs_local_action:
         lines.append("    Everyone should refresh their local .env.")

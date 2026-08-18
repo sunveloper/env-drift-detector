@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from .history import TemplateHistory
-from .models import DriftReport, Usage
+from .models import CommittedSecret, DriftReport, Usage
+from .secrets import looks_like_secret
 
 DEFAULT_IGNORED = frozenset(
     {
@@ -39,6 +40,7 @@ def compare(
     commit_subject: str = "",
     repo: str = "",
     history: TemplateHistory | None = None,
+    template_entries: Mapping[str, str] | None = None,
 ) -> DriftReport:
     """Classify each variable as documented, missing, optional-undocumented or unused.
 
@@ -85,6 +87,9 @@ def compare(
     unused = sorted(template_set - used_names - ignore_set) if detect_unused else []
 
     return DriftReport(
+        committed_secrets=_committed_secrets(
+            usage_tuple, template_entries, ignore_set, template_path
+        ),
         missing=tuple(missing),
         unused=tuple(unused),
         optional_undocumented=tuple(optional_undocumented),
@@ -96,3 +101,42 @@ def compare(
         repo=repo,
         history=history,
     )
+
+
+def _committed_secrets(
+    usages: Sequence[Usage],
+    template_entries: Mapping[str, str] | None,
+    ignored: set[str],
+    template_path: str,
+) -> tuple[CommittedSecret, ...]:
+    """Find credential-shaped values that are committed to the repository.
+
+    Two sources: a fallback literal in the source, and a placeholder in the env
+    template. Both are normally safe to print - anyone who can read the repo can
+    read them - but a value that should never have been committed must not be
+    re-published into a chat channel, so it is redacted and reported instead.
+
+    Deduplicated by (name, origin) so one variable read in several places does not
+    produce one finding per call site.
+    """
+    found: dict[tuple[str, str], CommittedSecret] = {}
+
+    for usage in usages:
+        if usage.name in ignored or not looks_like_secret(usage.default):
+            continue
+        key = (usage.name, usage.location())
+        found.setdefault(
+            key,
+            CommittedSecret(name=usage.name, where=usage.location(), kind="code default"),
+        )
+
+    for name, value in (template_entries or {}).items():
+        if name in ignored or not looks_like_secret(value):
+            continue
+        key = (name, template_path)
+        found.setdefault(
+            key,
+            CommittedSecret(name=name, where=template_path, kind="template placeholder"),
+        )
+
+    return tuple(sorted(found.values(), key=lambda s: (s.name, s.where)))

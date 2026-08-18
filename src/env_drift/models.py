@@ -42,6 +42,18 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class CommittedSecret:
+    """A credential-shaped value found in the repository. Never carries the value."""
+
+    name: str
+    where: str
+    """Human-readable origin, e.g. ``app.py:12`` or ``.env.example``."""
+
+    kind: str
+    """``"code default"`` or ``"template placeholder"``."""
+
+
+@dataclass(frozen=True)
 class DriftReport:
     """The outcome of comparing code usage against the env template."""
 
@@ -56,6 +68,14 @@ class DriftReport:
 
     Worth surfacing so the template can be completed, yet not a build breaker:
     the code runs correctly with the value unset.
+    """
+
+    committed_secrets: tuple[CommittedSecret, ...] = field(default=())
+    """Values in the repository that have the shape of a real credential.
+
+    A hardcoded ``sk_live_...`` default, or a real key pasted into the template.
+    Already a serious bug on its own, and the reason the reporters never print the
+    value: chat history reaches further than the repository does.
     """
 
     usages: tuple[Usage, ...] = field(default=())
@@ -81,12 +101,20 @@ class DriftReport:
     @property
     def is_noteworthy(self) -> bool:
         """Whether there is anything at all worth sending to Discord."""
-        return self.has_drift or bool(self.history and self.history.has_changes)
+        return (
+            self.has_drift
+            or bool(self.committed_secrets)
+            or bool(self.history and self.history.has_changes)
+        )
 
     @property
     def fails_build(self) -> bool:
-        """Only a required variable absent from the template is worth failing on."""
-        return bool(self.missing)
+        """A required variable absent from the template, or a committed credential.
+
+        Both stop a pipeline for good reason. ``--no-fail`` is the escape hatch if
+        the credential detection misfires on a value that only looks random.
+        """
+        return bool(self.missing or self.committed_secrets)
 
     def locations_for(self, name: str) -> tuple[str, ...]:
         """Where a given variable is read, deduplicated and ordered as found."""

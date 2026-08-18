@@ -22,6 +22,7 @@ up a fresh environment, whoever is on deploy duty.
 
 | Category | Meaning | Effect |
 | --- | --- | --- |
+| **Committed credential** | A value in the repo has the shape of a real key. | Exit code `1`, red embed. Value redacted. |
 | **Missing** | Read with no fallback, and the template does not document it. | Exit code `1`, red Discord embed. |
 | **Undocumented but has a default** | Read, undocumented, but every call site supplies a fallback. | Exit code `0`, yellow embed. |
 | **Unused** | The template documents it; nothing reads it. | Exit code `0`, yellow embed. Only in `--all` mode. |
@@ -59,6 +60,61 @@ omitting the argument, so it is treated as required too.
 "Unused" is deliberately suppressed in the default push mode. Scanning only the
 changed files means most template entries are legitimately absent from the scan
 set, so reporting them would be noise. Run `--all` when you want that answer.
+
+### Committed credentials
+
+Two values in a report come from the repository itself: a fallback literal in the
+source, and a placeholder in the template.
+
+```python
+os.getenv("PORT", "8000")          # the report prints: PORT (default `8000`)
+```
+
+Printing those is normally fine — anyone who can read the repo can read them. The
+exception is a value that should never have been committed:
+
+```python
+os.getenv("API_KEY", "sk_live_51H8sQ…")   # hardcoded in the source
+```
+```bash
+# .env.example
+STRIPE_SECRET_KEY=sk_live_51H8sQ…         # a real key pasted into the template
+```
+
+Both are already serious bugs, and echoing the value into a Discord channel makes
+them worse: chat history is retained and usually readable by more people than the
+repository is. So a credential-shaped value is **redacted in the output and
+reported as a finding**:
+
+```
+  COMMITTED CREDENTIAL (1) - rotate the value, then remove it from the repository:
+    ! API_KEY  code default at src/billing/client.py:12
+```
+
+The report carries the variable name, the origin and the kind — never the value,
+not even a fragment of it. `tests/test_secrets.py` asserts that no 8-, 12- or
+16-character slice of a credential reaches the output.
+
+This fails the build. A committed credential should stop a pipeline, and
+`--no-fail` is the escape hatch if the detection misfires.
+
+#### What counts as credential-shaped
+
+- **Known issuer formats** — `sk_live_`, `sk_test_`, `ghp_`, `github_pat_`,
+  `xoxb-`, `AKIA…`, `AIza…`, `SG.`, `glpat-`, `npm_`, `dop_v1_`, a PEM private key
+  header, a JWT.
+- **URLs with an embedded password** — `postgres://user:realpassword@host/db`.
+- **Opaque high-entropy blobs** — 32+ characters of base64/hex with Shannon
+  entropy at or above 3.6 bits per character.
+
+A value that declares itself a stand-in is never redacted, however random it
+looks, because seeing the placeholder is the point of the report. That covers
+`sk_live_replace_with_your_key`, `postgres://admin:changeme@localhost/db`, and
+AWS's own documentation key `AKIAIOSFODNN7EXAMPLE`.
+
+This is a shape heuristic, not a judgement about secrecy. It errs toward
+redacting: a redacted non-secret costs the reader one `git show`, while the
+opposite mistake cannot be undone.
 
 ## Template changes
 
@@ -321,7 +377,7 @@ env-drift --no-template-history            # skip the template-revision comparis
 | Code | Meaning |
 | --- | --- |
 | `0` | Nothing missing, or `--no-fail` was passed. Undocumented-with-a-default and stale template entries report but do not fail. |
-| `1` | Variables are read without a fallback and are not documented. |
+| `1` | Variables are read without a fallback and are not documented, or a committed credential was found. |
 | `2` | The tool could not run: not a git repo, template missing, webhook failed. |
 
 Both commands use the same codes.
@@ -428,6 +484,7 @@ scanner can be tested on plain strings and the comparison on plain sets:
 | `extractors/` | One module per stack. Env var reads with `file:line` and whether the read has a fallback. |
 | `template.py` | Names and placeholder values declared in the env template. |
 | `verify.py` | `env-drift verify` — classifies a live environment. Emits names only. |
+| `secrets.py` | Recognises a credential-shaped value so it is never re-published. |
 | `history.py` | How the template changed since the base revision. |
 | `drift.py` | Classify: missing / undocumented-with-default / unused / ignored. |
 | `models.py` | `Usage` and `DriftReport` — the values passed between stages. |
@@ -479,5 +536,9 @@ drift in files it did not touch, and a multi-commit push with an explicit base.
   included in an error message.
 - The destination host is validated against Discord's own domains, so a tampered
   environment variable cannot redirect reports to an attacker's endpoint.
-- Reports contain variable *names* and `file:line` locations. Never values.
+- Reports contain variable *names* and `file:line` locations. Values appear only
+  when they are already committed to the repository, and never when they look like
+  a credential — see [Committed credentials](#committed-credentials).
+- `env-drift verify` reads real values and emits none of them, not even a
+  fragment. Both properties are asserted by tests.
 - `.env` is in `.gitignore`; `.env.example` holds placeholders only.
