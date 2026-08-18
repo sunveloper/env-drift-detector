@@ -222,3 +222,62 @@ def test_untouched_template_reports_no_history(repo: Path, capsys):
 
     assert run_cli(repo) == 0
     assert "TEMPLATE CHANGED" not in capsys.readouterr().out
+
+
+def test_spring_boot_property_file_reads_are_detected(repo: Path, capsys):
+    # A Spring project's env var names live in application.yml, not in the Java.
+    commit_file(repo, ".env.example", "APP_PORT=8080\n", "add template")
+    commit_file(
+        repo,
+        "src/main/resources/application.yml",
+        "spring:\n"
+        "  datasource:\n"
+        "    url: ${DB_URL}\n"
+        "server:\n"
+        "  port: ${APP_PORT:8080}\n",
+        "add config",
+    )
+
+    assert run_cli(repo) == 1
+    out = capsys.readouterr().out
+    assert "DB_URL" in out
+    assert "src/main/resources/application.yml:3" in out
+    # APP_PORT is documented, so it must not appear as a finding.
+    assert "APP_PORT" not in out
+
+
+def test_spring_java_and_placeholder_reads_in_one_file(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(
+        repo,
+        "src/main/java/App.java",
+        "@Component\n"
+        "public class App {\n"
+        '  @Value("${DB_PASSWORD}")\n'
+        "  private String password;\n"
+        '  private String token = System.getenv("API_TOKEN");\n'
+        '  private String profile = System.getProperty("spring.profiles.active");\n'
+        "}\n",
+        "add component",
+    )
+
+    assert run_cli(repo) == 1
+    out = capsys.readouterr().out
+    assert "DB_PASSWORD" in out and "API_TOKEN" in out
+    # A dotted JVM property key is not an environment variable.
+    assert "spring.profiles.active" not in out
+
+
+def test_spring_placeholder_default_does_not_fail_the_build(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(
+        repo,
+        "src/main/resources/application.properties",
+        "server.port=${APP_PORT:8080}\n",
+        "add config",
+    )
+
+    assert run_cli(repo) == 0
+    out = capsys.readouterr().out
+    assert "APP_PORT" in out
+    assert "does not fail the build" in out

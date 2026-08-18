@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from .extractors import Registry, default_registry
+from .extractors.java import JavaExtractor
 from .extractors.javascript import JavaScriptExtractor
 from .extractors.nest import NestConfigExtractor
+from .extractors.property_placeholder import PropertyPlaceholderExtractor
 from .extractors.python_ast import PythonExtractor
 from .models import Usage
 
@@ -100,6 +102,14 @@ def scan_javascript(source: str, relative_path: str) -> list[Usage]:
 
 def scan_nest(source: str, relative_path: str) -> list[Usage]:
     return NestConfigExtractor().extract(source, relative_path)
+
+
+def scan_property_placeholders(source: str, relative_path: str) -> list[Usage]:
+    return PropertyPlaceholderExtractor().extract(source, relative_path)
+
+
+def scan_java(source: str, relative_path: str) -> list[Usage]:
+    return JavaExtractor().extract(source, relative_path)
 
 
 # Kept for callers that filtered on these before the registry existed.

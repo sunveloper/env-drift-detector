@@ -1,7 +1,8 @@
 # TODO — remaining work
 
-Java / Spring Boot support and one known false positive. This file records the
-design so the next session can pick it up without re-deriving it.
+Every planned stack is now supported. What is left is one known false positive and
+two optional refinements. This file records the design so the next session can
+pick it up without re-deriving it.
 
 ## Current coverage
 
@@ -11,46 +12,16 @@ design so the next session can pick it up without re-deriving it.
 | Node.js | Supported | — |
 | Next.js | Supported | Template is usually `.env.local`, so callers must pass `--template .env.local` |
 | NestJS | Supported | — |
-| Java / Spring Boot | Not supported | `.java`, `application.yml` and `application.properties` are never scanned |
+| Java / Spring Boot | Supported | — |
+| docker-compose | Supported | Side effect of sharing `${VAR}` syntax |
 
 ## Remaining plan
 
-1. **Spring Boot extractors** — `spring_props.py` for `${VAR}` / `${VAR:default}`
-   in `application.yml` and `application.properties`, plus `java.py` for
-   `System.getenv` and `System.getProperty`. The protocol's `filenames` field
-   already exists for the `application.*` case. ~3 h
-2. **Spring integration fixture** — a `src/main/resources/application.yml` plus a
-   `.java` file in the integration suite. ~1 h
-3. **Wrapped reads** — the two-pass analysis described below. ~2 h
-
-Roughly 6 h left. Spring is worth treating as its own phase; it costs as much as
-the registry and NestJS work combined did.
-
-## Why Spring Boot is the hard case
-
-Java code rarely reads an environment variable directly. It reads a Spring
-property, and the property file is what resolves to an environment variable:
-
-```yaml
-# application.yml
-spring:
-  datasource:
-    url: ${DB_URL}            # the environment variable is here
-```
-
-```java
-@Value("${spring.datasource.url}")   // the Java code only sees a property key
-private String url;
-```
-
-So the real environment variable names live in `application.yml` /
-`application.properties`, not in the Java source. Scanning `.java` alone would
-find almost nothing. Three forms need covering:
-
-- `${VAR}` in a property file — required.
-- `${VAR:default}` in a property file — optional, maps to `Usage.optional=True`.
-- `System.getenv("VAR")` and `System.getProperty("VAR")` in Java source — direct
-  reads that bypass the property layer.
+1. **Wrapped reads** — the two-pass analysis described below. The one known false
+   positive. ~2 h
+2. **Shape check from the placeholder** — described further down. Optional. ~2 h
+3. **Per-stack template auto-detection** — `.env.local` for Next.js, so
+   `--template` is not needed. Optional. ~1 h
 
 ## Known false positive: reads behind a helper
 
@@ -92,6 +63,22 @@ contain "config", and the key must be upper snake case.
 fallback. Reads with a fallback land in `DriftReport.optional_undocumented`, which
 reports without failing the build. The Spring extractors inherit this for free:
 `${VAR:default}` maps straight onto it.
+
+**Spring Boot.** `property_placeholder.py` reads `${VAR}`, `${VAR:default}`,
+`${VAR:-default}` and `${VAR:?error}` from `.yml`, `.yaml`, `.properties`, `.java`
+and `.kt` - the last two so `@Value("${DB_URL}")` is covered. `java.py` covers
+`System.getenv` and `System.getProperty`, which bypass the property layer. Both
+claim `.java`, since a Spring class can use each in one file.
+
+The upper-snake-case rule keeps Spring property keys out: `${DB_URL}` is an
+environment variable, `${spring.datasource.url}` resolves against a property
+source. The `${VAR}` syntax is shared with docker-compose and shell expansion, so
+those files are covered as a side effect, while GitHub Actions' `${{ ... }}` cannot
+match because a brace does not start an upper-snake-case name.
+
+Claiming by suffix rather than by the `filenames` field turned out to be the right
+call: it picks up profile variants (`application-prod.properties`) with no extra
+pattern matching.
 
 **Template revision comparison.** `history.py` compares the working-tree template
 against its revision at the base ref, reporting added names, removed names and
@@ -167,7 +154,11 @@ the same no-values rule. ~2 h
 
 - Should a Spring project compare against `.env.example` at all, or against a
   checked-in `application-example.yml`? Deployments usually inject the values as
-  real environment variables, which argues for `.env.example` staying the
-  template.
+  real environment variables, which argues for `.env.example` staying the template.
+  Left as is until someone using it in anger says otherwise.
 - Next.js splits `.env.local`, `.env.development` and `.env.production`. Worth
   auto-detecting the template per stack instead of requiring `--template`.
+- `property-placeholder` claims every `.yml`, which includes CI workflow files. A
+  workflow writing `${GITHUB_OUTPUT}` would be reported as an env read. That is
+  technically true but not useful; if it becomes noisy, add the common `GITHUB_*`
+  names to `DEFAULT_IGNORED` rather than excluding the directory.

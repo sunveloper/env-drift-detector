@@ -52,6 +52,9 @@ Detected fallback forms:
 | --- | --- | --- |
 | Python | `os.getenv("X", "d")`, `os.environ.get("X", "d")`, `environ.setdefault("X", "d")` | `os.getenv("X")`, `os.getenv("X", None)`, `os.environ["X"]` |
 | JS / TS | `process.env.X ?? "d"`, `process.env.X \|\| "d"` | `process.env.X` |
+| NestJS | `config.get("X", "d")`, `config.get("X") ?? "d"` | `config.get("X")`, `config.getOrThrow("X")` |
+| Property files | `${X:d}`, `${X:-d}`, `${X-d}` | `${X}`, `${X:?error}` |
+| Java / Kotlin | `System.getProperty("X", "d")`, `System.getenv("X") ?: "d"` | `System.getenv("X")` |
 
 `os.environ["X"]` is always required — it raises `KeyError` when unset, so there
 is no fallback path. `os.getenv("X", None)` says "no default" as clearly as
@@ -254,6 +257,8 @@ holding production configuration for a lint check.
 | `python` | `.py`, `.pyi` | `ast` parse | `os.getenv("X")`, `os.environ["X"]`, `os.environ.get("X")`, `environ.setdefault("X", ...)` |
 | `javascript` | `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` | regex | `process.env.X`, `process.env["X"]`, `import.meta.env.X` |
 | `nest-config` | same as `javascript` | regex | `configService.get('X')`, `get<string>('X')`, `get('X', default)`, `getOrThrow('X')` |
+| `property-placeholder` | `.yml`, `.yaml`, `.properties`, `.java`, `.kt` | regex | `${X}`, `${X:default}`, `${X:-default}`, `${X:?error}` |
+| `java` | `.java`, `.kt` | regex | `System.getenv("X")`, `System.getProperty("X", "d")`, Kotlin `?:` fallback |
 
 By stack:
 
@@ -263,7 +268,8 @@ By stack:
 | Node.js, Express | `javascript` |
 | Next.js | `javascript` — pass `--template .env.local` if that is the project's template |
 | NestJS | `javascript` + `nest-config`, both run over the same file |
-| Java / Spring Boot | Not yet — see `TODO.md` |
+| Java / Spring Boot | `property-placeholder` + `java`, both run over the same file |
+| docker-compose | `property-placeholder` — same `${VAR}` syntax, covered as a side effect |
 
 Python uses a real parser, so a variable name inside a comment or a docstring is
 not a false positive. Computed keys (`os.getenv(prefix + "NAME")`) are skipped —
@@ -276,6 +282,53 @@ is a data lookup. And the key must be upper snake case, because Nest's namespace
 keys (`config.get('app.port')`) resolve against a config object rather than the
 environment. `getOrThrow` is always treated as required: it states outright that
 an unset value is fatal.
+
+### Spring Boot
+
+Java code rarely reads an environment variable directly. It reads a Spring
+property, and the property file is what resolves to the environment:
+
+```yaml
+# application.yml
+spring:
+  datasource:
+    url: ${DB_URL}            # the environment variable is here
+```
+```java
+@Value("${spring.datasource.url}")   // the Java code only sees a property key
+private String url;
+```
+
+So scanning `.java` alone would find almost nothing — the names live in
+`application.yml` and `application.properties`. `property-placeholder` reads those,
+and also handles `@Value("${DB_URL}")` where an annotation names an environment
+variable directly. `java` covers `System.getenv` and `System.getProperty`, which
+bypass the property layer entirely.
+
+The same upper-snake-case rule applies: `${DB_URL}` is an environment variable,
+`${spring.datasource.url}` is a Spring property key resolved against a property
+source. `System.getProperty("spring.profiles.active")` is skipped for the same
+reason.
+
+`System.getProperty` is included even though it reads a JVM property rather than
+the environment, because in practice the value arrives as `-Dkey=$KEY` from a
+start script or container entrypoint — the same configuration surface a `.env`
+documents.
+
+Fallback spellings, all recognised:
+
+| Written | Meaning |
+| --- | --- |
+| `${DB_URL}` | Required |
+| `${APP_PORT:8080}` | Optional, default `8080` (Spring) |
+| `${APP_PORT:-8080}`, `${APP_PORT-8080}` | Optional (shell / docker-compose) |
+| `${DB_URL:?must be set}` | Required — the text is an error message, not a fallback |
+
+Only the first colon separates the default, so a JDBC URL default such as
+`${DB_URL:jdbc:postgresql://localhost:5432/app}` is read correctly.
+
+GitHub Actions' `${{ ... }}` never matches: a brace cannot start an
+upper-snake-case name.
 
 ### Adding a stack
 
