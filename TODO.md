@@ -78,24 +78,25 @@ After the refactor `scan_file` shrinks to: find the extractor that claims this
 file, call `extract`, return the usages. `drift.py` and `reporters/` need no
 changes at all — they only ever see `list[Usage]`.
 
-## Required model change: optional usages
+## Done: optional usages
 
-Spring's `${VAR:default}` and Nest's `configService.get('X') ?? 'fallback'` are
-reads with a built-in fallback. Reporting them as missing would be a false
-positive, so `Usage` needs an `optional: bool` field, and `drift.compare` needs
-to treat a variable as missing only when at least one non-optional read exists.
+`Usage.optional` and `Usage.default` exist, and `drift.compare` reports a
+variable as missing only when at least one read has no fallback. Reads with a
+fallback land in `DriftReport.optional_undocumented`, which reports without
+failing the build.
 
-This is the one change that touches existing code beyond the move, so it should
-land in the same commit as the registry refactor to keep the tests coherent.
+The new extractors inherit this for free: Spring's `${VAR:default}` and Nest's
+`configService.get('X') ?? 'fallback'` map to `optional=True`, with the literal
+captured in `default` when it is readable.
 
 ## Ordered plan
 
-1. **Refactor to the registry** — move the two existing extractors, add
-   `optional` to `Usage`, keep all current tests green. ~1.5 h
+1. **Refactor to the registry** — move the two existing extractors behind the
+   `Extractor` protocol, keep all current tests green. ~1.5 h
 2. **NestJS extractor** — `configService.get('X')`, including the generic form
    `get<string>('X')` and the `??` fallback. ~1 h
-3. **Spring Boot extractors** — `spring_props.py` plus `java.py`, with
-   `${VAR:default}` mapped to `optional=True`. ~3 h
+3. **Spring Boot extractors** — `spring_props.py` plus `java.py`, mapping
+   `${VAR:default}` to `optional=True`. ~3 h
 4. **Tests for the three new stacks** — one fixture repo per stack in the
    integration suite. ~1.5 h
 

@@ -114,7 +114,10 @@ def main(argv: list[str] | None = None) -> int:
     elif report.has_drift and not config.webhook_url:
         print("env-drift: DISCORD_WEBHOOK_URL not set - report not sent.", file=sys.stderr)
 
-    if report.missing and config.fail_on_missing:
+    # Only a required variable absent from the template breaks a deployment, so
+    # only that fails the run. Undocumented-with-a-default and stale template
+    # entries are reported and let through.
+    if report.fails_build and config.fail_on_missing:
         return EXIT_DRIFT
     return EXIT_OK
 

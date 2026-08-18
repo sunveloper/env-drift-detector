@@ -17,6 +17,21 @@ class Usage:
     name: str
     file: str
     line: int
+    optional: bool = False
+    """True when this read supplies its own fallback, e.g. ``os.getenv("PORT", "8000")``.
+
+    An optional read still deserves documenting - someone cloning the repo wants
+    to know the knob exists - but it cannot break a deployment by being unset, so
+    it must not fail CI.
+    """
+
+    default: str | None = None
+    """The fallback value, when it is a literal the scanner can read.
+
+    ``None`` for a required read, and also for an optional read whose fallback is
+    computed (``os.getenv("PORT", compute())``) - the flag still says optional,
+    but there is no literal to quote in the report.
+    """
 
     def location(self) -> str:
         return f"{self.file}:{self.line}"
@@ -27,10 +42,17 @@ class DriftReport:
     """The outcome of comparing code usage against the env template."""
 
     missing: tuple[str, ...]
-    """Read by the code but absent from the template - the failure case."""
+    """Read without a fallback and absent from the template - the failure case."""
 
     unused: tuple[str, ...]
     """Documented in the template but no longer read anywhere in the scan set."""
+
+    optional_undocumented: tuple[str, ...] = field(default=())
+    """Absent from the template, but every read supplies a fallback.
+
+    Worth surfacing so the template can be completed, yet not a build breaker:
+    the code runs correctly with the value unset.
+    """
 
     usages: tuple[Usage, ...] = field(default=())
     """Every usage found, so a report can point at file:line for the missing ones."""
@@ -43,7 +65,12 @@ class DriftReport:
 
     @property
     def has_drift(self) -> bool:
-        return bool(self.missing or self.unused)
+        return bool(self.missing or self.unused or self.optional_undocumented)
+
+    @property
+    def fails_build(self) -> bool:
+        """Only a required variable absent from the template is worth failing on."""
+        return bool(self.missing)
 
     def locations_for(self, name: str) -> tuple[str, ...]:
         """Where a given variable is read, deduplicated and ordered as found."""
@@ -52,3 +79,10 @@ class DriftReport:
             if usage.name == name:
                 seen.setdefault(usage.location(), None)
         return tuple(seen)
+
+    def default_for(self, name: str) -> str | None:
+        """The fallback shown for an optional variable, if the scanner captured one."""
+        for usage in self.usages:
+            if usage.name == name and usage.optional:
+                return usage.default
+        return None

@@ -60,22 +60,35 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 4].rstrip() + "\n..."
 
 
-def _missing_field(report: DriftReport) -> str:
+def _usage_field(report: DriftReport, names: tuple[str, ...], *, show_default: bool) -> str:
     lines: list[str] = []
-    for name in report.missing:
+    for name in names:
         locations = report.locations_for(name)
         shown = ", ".join(f"`{loc}`" for loc in locations[:_MAX_LOCATIONS_PER_VAR])
         extra = len(locations) - _MAX_LOCATIONS_PER_VAR
         if extra > 0:
             shown += f" +{extra}"
-        lines.append(f"• **{name}** — {shown}" if shown else f"• **{name}**")
+
+        label = f"**{name}**"
+        if show_default:
+            default = report.default_for(name)
+            if default is not None:
+                label += f" (default `{default}`)"
+        lines.append(f"• {label} — {shown}" if shown else f"• {label}")
     return _truncate("\n".join(lines), _MAX_FIELD_VALUE)
 
 
 def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
-    """Render the report as a Discord webhook JSON body."""
+    """Render the report as a Discord webhook JSON body.
+
+    Red is reserved for the build-breaking case. A variable that is undocumented
+    but has a default, or a stale template entry, is yellow: worth fixing, not
+    worth blocking a merge.
+    """
     if report.missing:
         color, title = COLOR_FAIL, "Env drift: variables missing from template"
+    elif report.optional_undocumented:
+        color, title = COLOR_WARN, "Env drift: undocumented variables with defaults"
     elif report.unused and detect_unused:
         color, title = COLOR_WARN, "Env drift: template has stale variables"
     else:
@@ -103,7 +116,20 @@ def build_payload(report: DriftReport, *, detect_unused: bool = True) -> dict:
         fields.append(
             {
                 "name": f"Missing from {report.template_path} ({len(report.missing)})",
-                "value": _missing_field(report),
+                "value": _usage_field(report, report.missing, show_default=False),
+                "inline": False,
+            }
+        )
+    if report.optional_undocumented:
+        fields.append(
+            {
+                "name": (
+                    "Undocumented but has a default "
+                    f"({len(report.optional_undocumented)}) — does not fail the build"
+                ),
+                "value": _usage_field(
+                    report, report.optional_undocumented, show_default=True
+                ),
                 "inline": False,
             }
         )

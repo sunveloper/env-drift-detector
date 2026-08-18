@@ -38,7 +38,18 @@ def compare(
     commit_subject: str = "",
     repo: str = "",
 ) -> DriftReport:
-    """Classify each variable as documented, missing or unused.
+    """Classify each variable as documented, missing, optional-undocumented or unused.
+
+    A variable absent from the template is split by whether the code can cope
+    without it:
+
+    * At least one read has no fallback -> ``missing``. The service breaks when
+      the value is unset, so this fails the build.
+    * Every read has a fallback -> ``optional_undocumented``. Worth adding to the
+      template so the knob is discoverable, but nothing breaks without it.
+
+    A variable read both ways counts as ``missing``: the read without a fallback
+    is the one that decides whether the service starts.
 
     Args:
         usages: Every read found by the scanner.
@@ -51,20 +62,30 @@ def compare(
             changed files, so reporting them as unused would be pure noise.
 
     Returns:
-        A ``DriftReport``. ``missing`` is sorted for a stable, reviewable diff.
+        A ``DriftReport`` with every list sorted, for a stable and reviewable diff.
     """
     ignore_set = set(DEFAULT_IGNORED if ignored is None else ignored)
     usage_tuple = tuple(usages)
     template_set = set(template_names)
 
-    used_names = {usage.name for usage in usage_tuple} - ignore_set
+    required_names: set[str] = set()
+    optional_names: set[str] = set()
+    for usage in usage_tuple:
+        if usage.name in ignore_set:
+            continue
+        (optional_names if usage.optional else required_names).add(usage.name)
 
-    missing = sorted(used_names - template_set)
+    used_names = required_names | optional_names
+    undocumented = used_names - template_set
+
+    missing = sorted(undocumented & required_names)
+    optional_undocumented = sorted(undocumented - required_names)
     unused = sorted(template_set - used_names - ignore_set) if detect_unused else []
 
     return DriftReport(
         missing=tuple(missing),
         unused=tuple(unused),
+        optional_undocumented=tuple(optional_undocumented),
         usages=usage_tuple,
         scanned_files=tuple(scanned_files),
         template_path=template_path,

@@ -120,3 +120,27 @@ def test_first_commit_in_repo_is_scannable(tmp_path: Path, capsys):
     # A repo whose HEAD has no parent must not crash on HEAD^.
     assert main(["--repo", str(tmp_path), "--dry-run"]) == 0
     assert "scanned" in capsys.readouterr().out
+
+
+def test_variable_with_a_default_is_reported_but_does_not_fail(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(repo, "app.py", "import os\nos.getenv('LOG_LEVEL', 'INFO')\n", "tunable")
+
+    assert run_cli(repo) == 0
+    out = capsys.readouterr().out
+    assert "LOG_LEVEL" in out
+    assert "does not fail the build" in out
+
+
+def test_variable_without_a_default_still_fails(repo: Path, capsys):
+    commit_file(repo, ".env.example", "KNOWN=x\n", "add template")
+    commit_file(
+        repo,
+        "app.py",
+        "import os\nos.getenv('LOG_LEVEL', 'INFO')\nos.getenv('SECRET_KEY')\n",
+        "mixed",
+    )
+
+    assert run_cli(repo) == 1
+    out = capsys.readouterr().out
+    assert "SECRET_KEY" in out and "LOG_LEVEL" in out

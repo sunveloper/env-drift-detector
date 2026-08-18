@@ -22,9 +22,39 @@ up a fresh environment, whoever is on deploy duty.
 
 | Category | Meaning | Effect |
 | --- | --- | --- |
-| **Missing** | The code reads it; the template does not document it. | Exit code `1`, red Discord embed. |
+| **Missing** | Read with no fallback, and the template does not document it. | Exit code `1`, red Discord embed. |
+| **Undocumented but has a default** | Read, undocumented, but every call site supplies a fallback. | Exit code `0`, yellow embed. |
 | **Unused** | The template documents it; nothing reads it. | Exit code `0`, yellow embed. Only in `--all` mode. |
 | **Ignored** | Platform-supplied names such as `PATH`, `CI`, `NODE_ENV`. | Never reported. |
+
+### Why "has a default" is a separate category
+
+Non-secret settings are usually written with a fallback:
+
+```python
+port = os.getenv("PORT", "8000")           # runs fine when unset
+level = os.getenv("LOG_LEVEL", "INFO")     # runs fine when unset
+key = os.getenv("STRIPE_SECRET_KEY")       # returns None, breaks later
+```
+
+Only the third one can break a deployment, so only the third one fails the
+build. The first two are still reported — someone cloning the repo should know
+the knob exists — but they land in a yellow, non-blocking section. Collapsing
+all three into one red alert is what trains a team to ignore the alert.
+
+A variable read both ways counts as **missing**: if any call site cannot cope
+without the value, the service can still break.
+
+Detected fallback forms:
+
+| Language | Optional | Required |
+| --- | --- | --- |
+| Python | `os.getenv("X", "d")`, `os.environ.get("X", "d")`, `environ.setdefault("X", "d")` | `os.getenv("X")`, `os.getenv("X", None)`, `os.environ["X"]` |
+| JS / TS | `process.env.X ?? "d"`, `process.env.X \|\| "d"` | `process.env.X` |
+
+`os.environ["X"]` is always required — it raises `KeyError` when unset, so there
+is no fallback path. `os.getenv("X", None)` says "no default" as clearly as
+omitting the argument, so it is treated as required too.
 
 "Unused" is deliberately suppressed in the default push mode. Scanning only the
 changed files means most template entries are legitimately absent from the scan
@@ -87,9 +117,13 @@ env-drift: scanned 3 file(s) against .env.example
   MISSING from .env.example (2):
     - STRIPE_WEBHOOK_SECRET  read at src/billing/webhook.py:24
     - STRIPE_API_VERSION  read at src/billing/client.py:11, src/billing/client.py:58
+
+  UNDOCUMENTED but has a default (1) - does not fail the build:
+    - BILLING_TIMEOUT_SECONDS (default: "30")  read at src/billing/client.py:19
 ```
 
-Exit code is `1`, so CI stops there.
+Exit code is `1` because of the two missing entries, so CI stops there. Had
+`BILLING_TIMEOUT_SECONDS` been the only finding, the exit code would be `0`.
 
 ### Common invocations
 
@@ -108,8 +142,8 @@ env-drift --notify-on-success              # also post the green "all clear"
 
 | Code | Meaning |
 | --- | --- |
-| `0` | No missing variables, or `--no-fail` was passed. |
-| `1` | Variables are read but not documented. |
+| `0` | Nothing missing, or `--no-fail` was passed. Undocumented-with-a-default and stale template entries report but do not fail. |
+| `1` | Variables are read without a fallback and are not documented. |
 | `2` | The tool could not run: not a git repo, template missing, webhook failed. |
 
 ## Run it on every push
@@ -209,9 +243,10 @@ scanner can be tested on plain strings and the comparison on plain sets:
 | Module | Responsibility |
 | --- | --- |
 | `git_source.py` | Which files the push touched; commit metadata. |
-| `scanner.py` | Env var reads found in source, with `file:line`. |
+| `scanner.py` | Env var reads found in source, with `file:line` and whether the read has a fallback. |
 | `template.py` | Names declared in the env template. |
-| `drift.py` | Classify: missing / unused / ignored. |
+| `drift.py` | Classify: missing / undocumented-with-default / unused / ignored. |
+| `models.py` | `Usage` and `DriftReport` — the values passed between stages. |
 | `reporters/` | Render to terminal or Discord. |
 | `config.py` | Flag, then environment, then default precedence. |
 | `cli.py` | Wire the stages together; own the exit codes. |
@@ -235,6 +270,12 @@ drift in files it did not touch, and a multi-commit push with an explicit base.
   what its value should be. Values in it are placeholders.
 - JS/TS detection is regex-based, so `process.env` inside a JS comment counts as
   a usage. That errs toward over-reporting, which is the safer direction.
+- A fallback is only recognised at the read itself. `value = os.getenv("X") or
+  "default"` on the next line, or a default applied inside a config class, still
+  reports as required. Again, over-reporting rather than staying silent.
+- The tool cannot tell a secret from a plain setting — it never reads values, so
+  it has nothing to judge that on. Both must appear in the template, which is
+  the point: the template answers "what do I need to set", not "what is secret".
 - Only the template is compared. The tool does not read the values present in a
   live environment, so it cannot tell you that staging is missing a value it
   does document. That is deliberate: it needs no production access to run.

@@ -23,12 +23,18 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
         lines.append("")
         lines.append(f"  MISSING from {report.template_path} ({len(report.missing)}):")
         for name in report.missing:
-            locations = report.locations_for(name)
-            shown = ", ".join(locations[:_MAX_LOCATIONS])
-            more = len(locations) - _MAX_LOCATIONS
-            if more > 0:
-                shown += f" (+{more} more)"
-            lines.append(f"    - {name}  read at {shown}")
+            lines.append(f"    - {name}  read at {_locations(report, name)}")
+
+    if report.optional_undocumented:
+        lines.append("")
+        lines.append(
+            f"  UNDOCUMENTED but has a default ({len(report.optional_undocumented)}) "
+            "- does not fail the build:"
+        )
+        for name in report.optional_undocumented:
+            default = report.default_for(name)
+            shown = f' (default: "{default}")' if default is not None else ""
+            lines.append(f"    - {name}{shown}  read at {_locations(report, name)}")
 
     if report.unused and detect_unused:
         lines.append("")
@@ -37,3 +43,12 @@ def render_console(report: DriftReport, *, detect_unused: bool = True) -> str:
             lines.append(f"    - {name}")
 
     return "\n".join(lines)
+
+
+def _locations(report: DriftReport, name: str) -> str:
+    locations = report.locations_for(name)
+    shown = ", ".join(locations[:_MAX_LOCATIONS])
+    more = len(locations) - _MAX_LOCATIONS
+    if more > 0:
+        shown += f" (+{more} more)"
+    return shown
