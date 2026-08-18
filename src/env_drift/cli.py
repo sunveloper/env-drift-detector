@@ -1,14 +1,22 @@
-"""Command-line entry point: scan the pushed commit, report drift, notify Discord.
+"""Command-line entry point.
 
-Exit codes:
-    0  no missing variables (or ``--no-fail`` was given)
-    1  variables are read by the code but absent from the template
+Two commands:
+    env-drift            scan the pushed commit for drift and report to Discord
+    env-drift verify     check that the local environment is actually filled in
+
+The default command is implied, so ``env-drift --dry-run`` still works. Only a
+first argument that names a command is routed elsewhere.
+
+Exit codes (shared by both commands):
+    0  nothing to act on (or ``--no-fail`` was given)
+    1  something needs fixing
     2  the tool could not run (bad repo, missing template, webhook failure)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -21,10 +29,13 @@ from .git_source import GitError, changed_files, commit_info, parent_ref, repo_r
 from .history import template_history
 from .reporters import DiscordError, render_console, send_to_discord
 from .scanner import iter_source_files, scan_paths
+from .verify import load_env_file, render_verify_report, verify_environment
 
 EXIT_OK = 0
 EXIT_DRIFT = 1
 EXIT_ERROR = 2
+
+COMMANDS = ("verify",)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,9 +93,81 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_verify_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="env-drift verify",
+        description=(
+            "Check that every variable documented in the template has a real value "
+            "in this environment. Reports variable names only - never a value - and "
+            "sends nothing anywhere."
+        ),
+    )
+    parser.add_argument("--repo", help="Path to the repository (default: current directory)")
+    parser.add_argument("--template", help="Env template to check against (default: .env.example)")
+    parser.add_argument(
+        "--env-file",
+        help="Check this .env file instead of the process environment",
+    )
+    parser.add_argument(
+        "--strict-placeholder",
+        action="store_true",
+        help="Flag any value still equal to its template value, not only ones that "
+        "look like stand-ins. For projects whose template holds no real defaults.",
+    )
+    parser.add_argument(
+        "--no-fail",
+        dest="fail",
+        action="store_false",
+        help="Always exit 0, even when something needs fixing",
+    )
+    return parser
+
+
+def verify_main(argv: list[str]) -> int:
+    """``env-drift verify`` - no Discord path, by design. See ``verify`` module."""
+    args = build_verify_parser().parse_args(argv)
+
+    repo_path = Path(args.repo or ".").resolve()
+    template_path = Path(args.template or os.getenv("ENV_EXAMPLE_PATH") or ".env.example")
+    if not template_path.is_absolute():
+        template_path = repo_path / template_path
+
+    if not template_path.is_file():
+        print(f"env-drift: env template not found: {template_path}", file=sys.stderr)
+        return EXIT_ERROR
+
+    if args.env_file:
+        env_path = Path(args.env_file)
+        if not env_path.is_absolute():
+            env_path = repo_path / env_path
+        if not env_path.is_file():
+            print(f"env-drift: env file not found: {env_path}", file=sys.stderr)
+            return EXIT_ERROR
+        environment = load_env_file(env_path)
+        source = f"file {env_path.name}"
+    else:
+        environment = dict(os.environ)
+        source = "process environment"
+
+    report = verify_environment(
+        template_path.read_text(encoding="utf-8", errors="replace"),
+        environment,
+        strict_placeholder=args.strict_placeholder,
+        template_path=template_path.name,
+        source=source,
+    )
+    print(render_verify_report(report))
+
+    return EXIT_DRIFT if (report.has_findings and args.fail) else EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()  # local convenience; in CI the values come from the environment
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] in COMMANDS:
+        return verify_main(raw[1:])
+
+    args = build_parser().parse_args(raw)
 
     config = Config.resolve(
         repo=args.repo,

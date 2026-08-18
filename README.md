@@ -121,14 +121,75 @@ retained and usually readable by more people than the secret store is.
 so an alert on every change is noise. It does not distinguish a correct rotation
 from a wrong value.
 
-A more useful direction — comparing a live value against the committed
-*placeholder*, to catch the `.env` that was copied and never filled in — is
-tracked in `TODO.md`. It answers "is this value wrong" rather than "did it
+The useful version of this request is implemented instead, as
+[`env-drift verify`](#env-drift-verify): it compares a live value against the
+committed *placeholder*, answering "is this value wrong" rather than "did it
 change", and it runs where the value already legitimately lives.
 
 The template is a different case entirely: its values are placeholders by
 definition, and it is already committed to the repository. Comparing it needs no
 cache and no access — git is the store.
+
+## `env-drift verify`
+
+The main command asks "is the template complete?". This asks the other half: "the
+template is complete — is *my* environment?" It catches the `.env` that was copied
+from `.env.example` and never edited, which is the most common way a correctly
+documented variable still ends up wrong.
+
+```bash
+env-drift verify                      # check the process environment
+env-drift verify --env-file .env      # check a specific file instead
+env-drift verify --strict-placeholder # flag any value still equal to the template
+env-drift verify --no-fail            # report without failing
+```
+
+```
+env-drift verify: checked 6 variable(s) from .env.example against the process environment
+
+  NOT SET (2):
+    - DATABASE_URL
+    - REDIS_URL
+
+  STILL THE TEMPLATE PLACEHOLDER (1):
+    - STRIPE_SECRET_KEY
+```
+
+Exit code `1` when there are findings, `2` if the template or `--env-file` is
+missing.
+
+### What counts as a finding
+
+| Situation | Reported |
+| --- | --- |
+| Template value is non-empty, live value is missing or blank | `NOT SET` |
+| Live value equals the template value, and that value looks like a stand-in | `STILL THE TEMPLATE PLACEHOLDER` |
+| Live value equals the template value, and that value is a genuine default | Not reported |
+| Template value is empty | Not reported — the template says no value is needed |
+
+A template may hold real defaults: `PORT=3000`, `LOG_LEVEL=INFO`,
+`ENV_EXAMPLE_PATH=.env.example`. An environment that keeps those is correct, so
+flagging them would make the command useless in exactly the projects that write
+good templates. A stand-in is recognised by markers such as `replace`, `changeme`,
+`your-`, `placeholder`, `<...>`, `@example.com`, or a run of six or more identical
+characters. Use `--strict-placeholder` for a project whose template holds no real
+defaults.
+
+### Where to run it
+
+This command reads real values, so run it somewhere they already belong: a
+developer's machine, or a deploy job that already has the configuration injected.
+Two properties make that safe:
+
+- **A report holds variable names and a verdict. No value, no hash, no prefix, no
+  length.** `tests/test_verify.py` asserts this, including that no three-character
+  fragment of a value appears in the output.
+- **Nothing is persisted and nothing is sent anywhere.** `verify` has no
+  `--webhook` option — deliberately, so there is no code path from a real value to
+  an external service. A test asserts that option does not exist.
+
+This is also why `verify` is not part of the push workflow: CI has no business
+holding production configuration for a lint check.
 
 ## Languages scanned
 
@@ -238,6 +299,9 @@ env-drift: scanned 3 file(s) against .env.example
 Exit code is `1` because of the two missing entries, so CI stops there. Had
 `BILLING_TIMEOUT_SECONDS` been the only finding, the exit code would be `0`.
 
+There is a second command, `env-drift verify`, documented
+[below](#env-drift-verify).
+
 ### Common invocations
 
 ```bash
@@ -259,6 +323,8 @@ env-drift --no-template-history            # skip the template-revision comparis
 | `0` | Nothing missing, or `--no-fail` was passed. Undocumented-with-a-default and stale template entries report but do not fail. |
 | `1` | Variables are read without a fallback and are not documented. |
 | `2` | The tool could not run: not a git repo, template missing, webhook failed. |
+
+Both commands use the same codes.
 
 ## Run it on every push
 
@@ -361,6 +427,7 @@ scanner can be tested on plain strings and the comparison on plain sets:
 | `scanner.py` | Which files to open; hands each to the registry. No language knowledge. |
 | `extractors/` | One module per stack. Env var reads with `file:line` and whether the read has a fallback. |
 | `template.py` | Names and placeholder values declared in the env template. |
+| `verify.py` | `env-drift verify` — classifies a live environment. Emits names only. |
 | `history.py` | How the template changed since the base revision. |
 | `drift.py` | Classify: missing / undocumented-with-default / unused / ignored. |
 | `models.py` | `Usage` and `DriftReport` — the values passed between stages. |
