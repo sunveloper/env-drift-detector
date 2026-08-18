@@ -273,6 +273,12 @@ drift in files it did not touch, and a multi-commit push with an explicit base.
 - A fallback is only recognised at the read itself. `value = os.getenv("X") or
   "default"` on the next line, or a default applied inside a config class, still
   reports as required. Again, over-reporting rather than staying silent.
+- Reads wrapped in a helper are invisible. If a project calls
+  `env_flag("FEATURE_X", True)` and the helper does `os.getenv(name)` internally,
+  the scanner sees a computed key and skips it — so `FEATURE_X` shows up as
+  *unused* in `--all` mode even though it is read. This tool's own `config.py`
+  has that shape, which is how the limitation was found. Workaround for now: add
+  such names to `ENV_DRIFT_IGNORE`. Tracked in `TODO.md`.
 - The tool cannot tell a secret from a plain setting — it never reads values, so
   it has nothing to judge that on. Both must appear in the template, which is
   the point: the template answers "what do I need to set", not "what is secret".

@@ -100,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
     print(render_console(report, detect_unused=config.scan_all))
+    # stdout is block-buffered when piped while stderr is not, so without this the
+    # warnings below would surface above the report they refer to.
+    sys.stdout.flush()
 
     should_notify = config.webhook_url and not config.dry_run and (
         report.has_drift or config.notify_on_success

@@ -104,6 +104,26 @@ Total ~7 h. Steps 1 and 2 alone deliver full Node / Next / Nest coverage in
 ~2.5 h; Spring is worth treating as a separate phase because it costs as much as
 everything else combined.
 
+## Known false positive: reads behind a helper
+
+Found by running the tool on its own repository. `config.py` calls
+`_env_flag("ENV_DRIFT_FAIL_ON_MISSING", True)`, and the helper does
+`os.getenv(name)` with a variable key. The scanner correctly refuses to guess a
+computed key, so the read is never attributed to the literal at the call site,
+and `--all` mode reports the variable as unused.
+
+The pattern is common — Django settings modules, NestJS config factories, any
+project with a typed settings wrapper — so this matters more than the "no real
+codebase does this" cases.
+
+Sketch of a fix: treat a call to a *project-local* function as a read when a
+string literal is passed and that function's body reads `os.getenv` from its own
+parameter. That is a two-pass analysis (collect wrapper signatures, then resolve
+call sites), so it belongs after the extractor registry refactor rather than
+bolted onto the current visitor. Estimated ~2 h once the registry exists.
+
+Workaround until then: list the names in `ENV_DRIFT_IGNORE`.
+
 ## Open questions
 
 - Should a Spring project compare against `.env.example` at all, or against a

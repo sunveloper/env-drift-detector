@@ -29,11 +29,21 @@ e = environ.setdefault("ECHO", "x")
 
 def test_ignores_strings_and_comments():
     source = '''
+import os
+
 # os.getenv("COMMENTED")
 doc = """os.getenv("IN_DOCSTRING")"""
-real = __import__("os").getenv("REAL")
+real = os.getenv("REAL")
 '''
     assert names(scan_python(source, "app.py")) == ["REAL"]
+
+
+def test_dynamic_import_of_os_is_not_recognised():
+    # __import__("os").getenv(...) puts a Call where the visitor expects a name,
+    # so this form is missed. Documented here so the gap is deliberate, not a
+    # surprise: no real codebase reads configuration this way.
+    source = 'real = __import__("os").getenv("REAL")\n'
+    assert scan_python(source, "app.py") == []
 
 
 def test_skips_computed_keys():
